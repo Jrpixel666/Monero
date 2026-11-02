@@ -1,0 +1,36 @@
+# Threat model
+
+This wallet handles funds that are unrecoverable if a private spend key or seed leaks, and is
+privacy software whose entire value proposition fails if metadata leaks. Both failure modes are
+treated as severe. Status tags below are honest, not aspirational: `[done]` means code in this
+repo implements the mitigation today; `[planned: stage N]` means it is designed for but not yet
+built, per the staged plan in `README.md`.
+
+| # | Threat | Attacker capability | Mitigation | Status |
+|---|---|---|---|---|
+| 1 | Malicious co-installed app | Shares the device, no root; tries IPC, shared storage, clipboard, screenshots | No exported components beyond what's required; secrets never written to shared storage, `MediaStore`, or world-readable paths; `allowBackup=false` + `dataExtractionRules` so Android backup can't exfiltrate app data; wallet file encrypted at rest (XChaCha20-Poly1305, key derived via Argon2id, see `crates/storage`) so even a read of app-private storage yields ciphertext | encryption: **done** (`crates/storage`); Android manifest hardening: planned: stage 3 |
+| 2 | Overlay / tapjacking attack | Draws a view on top of the wallet UI to intercept taps or spoof an address/amount | `FLAG_SECURE` on sensitive screens blocks screenshot-based overlay capture; `filterTouchesWhenObscured` on send/confirm buttons so a tap through an overlay is dropped; address shown with highlighted start/end plus a mandatory re-display + biometric confirmation step before broadcast, so a spoofed destination has to survive two independent redraws | planned: stage 5 (Android security) / stage 6 (send flow) |
+| 3 | Accessibility-service abuse | A malicious accessibility service reads screen content or injects taps | Sensitive fields excluded from the accessibility node tree where the platform allows it (`importantForAccessibility=no` is not applied to content a legitimate screen reader needs, since that itself is a usability/accessibility harm — only applied to raw secret material, never to balances or addresses meant to be read aloud); seed display is a one-time, explicitly-acknowledged screen, not something left on-screen idle | planned: stage 5 |
+| 4 | Clipboard hijacking (e.g. "address swapper" malware) | Monitors/replaces clipboard contents between copy and paste | `MARK_AS_SENSITIVE` clipboard flag on Android 13+ when the wallet itself copies an address; mandatory re-verification step shows the *full* pasted address (not just the ellipsized middle) with start/end highlighted before any send is confirmed | planned: stage 6 |
+| 5 | Rooted / compromised device | Full OS compromise: can read process memory, bypass app sandboxing | No mitigation fully defeats a compromised kernel. Mitigations reduce blast radius and warn: root/emulator detection surfaces a non-dismissible warning (not a hard block, to avoid punishing legitimate rooted-phone owners); Android Keystore key (StrongBox when available) requires a hardware-backed, authenticated unlock so a memory-dump of the app alone does not yield the encryption key; secrets zeroized immediately after use (`zeroize`/`Zeroizing` throughout `wallet-core`) to shrink the window a memory scraper can win in | zeroizing of secrets in memory: **done**; root detection / Keystore wiring: planned: stage 3 |
+| 6 | Malicious or lying remote/local node | Operates or MITMs the daemon RPC the wallet queries | Every daemon response is treated as untrusted input. All consensus-critical validation (ring signature structure, output decoding, commitment math) happens locally via audited `monero-oxide` code, never trusted from the node; height is checked for monotonic non-regression; decoy selection happens entirely client-side so a node can't bias it; `crates/network` documents this trust boundary explicitly in its trait design | height-regression check: **done** (`crates/network`); full RPC response validation wiring: planned: stage 4 |
+| 7 | Network-level surveillance (ISP, Wi-Fi operator, global passive adversary) | Observes which IPs the wallet talks to and when | Embedded Tor (Arti) on by default routes daemon RPC and the optional price feed through Tor, so the wallet's IP is not visible to the node or price API; sync runs as a foreground service so it isn't silently paused/resumed in a traffic-correlatable pattern tied to screen-on events | planned: stage 4 |
+| 8 | Phishing (fake wallet app, fake "support", fake update) | Tricks the user into typing their seed or sending to a wrong address somewhere outside this app's control | Cannot be fully solved by the app; UI design mitigates: plain-language warnings on every screen that displays or requests the seed ("no one from support will ever ask for this"), seed only ever shown inside this app's own secured screen, no in-app browser/WebView that could host a convincing fake | planned: stage 6 |
+| 9 | Physical theft of an unlocked/locked phone | Has the device, possibly briefly unattended and unlocked | Auto-lock on backgrounding and after an inactivity timeout; Class 3 biometric or PIN required to reopen; configurable wipe after N failed unlock attempts (opt-in, off by default, since it's also a denial-of-funds risk if mistaken); decoy wallet PIN opens a separate, low-balance wallet under duress | planned: stage 3 |
+| 10 | Supply-chain compromise (malicious dependency, compromised build, malicious update) | Compromises a crate, the Android toolchain, or the release pipeline rather than attacking the running app | No custom cryptography anywhere — only `monero-oxide` and well-audited RustCrypto crates (`argon2`, `chacha20poly1305`, `zeroize`); pinned dependency versions (git `rev`-pinned, not branch-tracked) checked in; `cargo-audit`/`cargo-deny`/`cargo-vet` intended to gate CI; reproducible builds with published hashes so a tampered release artifact is detectable by anyone rebuilding from source | dependency pinning: **done** (`rev`-pinned git dependency in `crates/wallet-core/Cargo.toml`); audit/deny/vet CI, reproducible release builds: planned: stage 9 |
+
+## Non-goals / residual risk
+
+- A fully compromised OS kernel or a hardware implant defeats any app-level mitigation; this
+  threat model does not claim otherwise.
+- Tor provides network-level privacy, not protection against a global passive adversary
+  correlating traffic over long time windows.
+- No mitigation here protects a user who is coerced in person beyond the decoy-wallet feature,
+  which is itself a partial mitigation (a sufficiently informed attacker can ask whether a decoy
+  exists).
+
+## How this maps to the staged build plan
+
+Stage numbers match `README.md`. Each later stage must re-open this file and flip a `planned` row
+to `done` only once the corresponding code actually exists and has a test exercising it — not
+when a screen merely renders.

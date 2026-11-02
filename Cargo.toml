@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/wallet-core",
+  "crates/storage",
+  "crates/network",
+]
+
+[profile.release]
+# Never strip/optimize away panics in a wallet handling secrets; a controlled abort beats
+# continuing past a violated invariant.
+panic = "abort"
+overflow-checks = true
+
+[profile.dev]
+overflow-checks = true

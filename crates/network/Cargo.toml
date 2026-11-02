@@ -1,0 +1,11 @@
+[package]
+name = "network"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "Daemon RPC trust boundary and trait surface (transport lands in a later stage)"
+license = "MIT"
+publish = false
+
+[dependencies]
+thiserror = "2"

@@ -1,0 +1,20 @@
+[package]
+name = "wallet-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "Monero wallet key management, address derivation and scanning, built on monero-oxide"
+license = "MIT"
+publish = false
+
+[dependencies]
+# Pinned to a specific commit (not a branch) so the dependency can't change under us without a
+# reviewed, deliberate bump. monero-oxide is the audited crypto; this crate never reimplements it.
+monero-wallet = { git = "https://github.com/monero-oxide/monero-oxide", rev = "a6b46701fb9b331006d7f2f2278bf51f123b1447" }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc", "zeroize"] }
+zeroize = { version = "1", default-features = false, features = ["zeroize_derive", "alloc"] }
+rand_core = { version = "0.6", default-features = false, features = ["std", "getrandom"] }
+thiserror = "2"
+
+[dev-dependencies]
+hex = "0.4"
