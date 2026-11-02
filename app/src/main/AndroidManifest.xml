@@ -2,10 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-         No INTERNET permission: this stage has no networking (see README.md stage 4). Adding it
-         only once a daemon-RPC client actually exists keeps "minimum permissions" (THREAT_MODEL.md)
-         honest rather than aspirational.
+         INTERNET: added in stage 4, when crates/rpc's daemon-RPC client landed — not before, so
+         "minimum permissions" (THREAT_MODEL.md) stays honest rather than aspirational. This is
+         the one permission the app genuinely needs now: talking to a Monero daemon.
     -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <application

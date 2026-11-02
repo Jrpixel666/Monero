@@ -11,11 +11,23 @@
 //! of the Android security hardening work, not bolted on here.
 #![forbid(unsafe_code)]
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use tokio::runtime::Runtime;
 use zeroize::Zeroizing;
 
 uniffi::setup_scaffolding!();
+
+/// `rpc`'s async daemon calls are built on real Tokio I/O internally (via
+/// `monero-simple-request-rpc`'s use of hyper/Tokio), which needs an actual Tokio reactor
+/// polling them — UniFFI's async export mechanism itself is executor-agnostic and doesn't
+/// provide one. This background runtime bridges the two: exported async functions `spawn` onto
+/// it and `.await` the `JoinHandle`, so the real I/O runs on this runtime's worker threads
+/// regardless of what (if anything) is driving the outer future on the Kotlin side.
+fn background_runtime() -> &'static Runtime {
+  static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+  RUNTIME.get_or_init(|| Runtime::new().expect("failed to start background Tokio runtime"))
+}
 
 /// Errors surfaced across the FFI boundary. Deliberately flattened to a message string per
 /// category — the Kotlin side has no use for `wallet-core`'s internal error variants, only for
@@ -29,6 +41,9 @@ pub enum WalletError {
   /// A problem opening or creating the encrypted wallet envelope.
   #[error("{0}")]
   Storage(String),
+  /// A problem talking to a daemon.
+  #[error("{0}")]
+  Network(String),
 }
 
 impl From<wallet_core::keys::KeyError> for WalletError {
@@ -40,6 +55,34 @@ impl From<wallet_core::keys::KeyError> for WalletError {
 impl From<storage::StorageError> for WalletError {
   fn from(e: storage::StorageError) -> Self {
     WalletError::Storage(e.to_string())
+  }
+}
+
+impl From<rpc::RpcError> for WalletError {
+  fn from(e: rpc::RpcError) -> Self {
+    WalletError::Network(e.to_string())
+  }
+}
+
+/// Connect to a Monero daemon at `daemon_url` (e.g. `"https://xmr.example.com"`) and return its
+/// current chain height. This is a direct, unauthenticated clearnet connection — see
+/// `crates/rpc`'s module docs for why it isn't routed through Tor yet.
+///
+/// Every value this returns is untrusted daemon input; `network::HeightTracker` (not exposed
+/// over FFI yet — there's no sync session to hold one across calls until stage 5) is how a real
+/// sync loop should guard against a height that regresses between calls.
+#[uniffi::export]
+pub async fn fetch_chain_height(daemon_url: String) -> Result<u64, WalletError> {
+  let result = background_runtime()
+    .spawn(async move {
+      let client = rpc::DaemonClient::connect(daemon_url).await?;
+      client.latest_block_number().await
+    })
+    .await;
+
+  match result {
+    Ok(inner) => inner.map_err(WalletError::from),
+    Err(_join_error) => Err(WalletError::Network("background RPC task panicked".to_owned())),
   }
 }
 
@@ -125,5 +168,12 @@ mod tests {
     let wallet = FfiWallet::generate();
     let envelope = wallet.export_encrypted("correct".to_owned()).unwrap();
     assert!(FfiWallet::restore_from_encrypted("incorrect".to_owned(), envelope).is_err());
+  }
+
+  #[tokio::test]
+  #[ignore = "hits a real third-party Monero node; opt in with: cargo test -p ffi -- --ignored"]
+  async fn fetch_chain_height_reaches_a_real_node() {
+    let height = fetch_chain_height("https://xmr.kret.dev".to_owned()).await.unwrap();
+    assert!(height > 3_000_000, "mainnet should be well past block 3,000,000 by now");
   }
 }

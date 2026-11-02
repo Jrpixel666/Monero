@@ -1,0 +1,20 @@
+[package]
+name = "rpc"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "Real daemon RPC client, implementing the network crate's trust boundary"
+license = "MIT"
+publish = false
+
+[dependencies]
+network = { path = "../network" }
+wallet-core = { path = "../wallet-core" }
+# Pinned to the same commit as wallet-core's monero-wallet dependency, so the whole
+# monero-oxide dependency surface moves as one deliberate, reviewed bump.
+monero-simple-request-rpc = { git = "https://github.com/monero-oxide/monero-oxide", rev = "a6b46701fb9b331006d7f2f2278bf51f123b1447" }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

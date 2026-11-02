@@ -10,21 +10,21 @@ the next starts; nothing is marked done until it actually builds and has a test 
 
 ## Status
 
-**Stages 1, 2 and 3 are done** — there is a real, installable debug APK (see "Building the Android
-app" below) with a Rust core, Keystore-backed biometric unlock, root detection and a decoy wallet
-all wired through to a Compose screen on-device, **but none of stage 3's Android security code has
-been run on a real device or emulator** — this sandbox has no Android runtime, only
-`gradle assembleDebug` and JVM unit tests (see THREAT_MODEL.md rows 5/9). Stages 4–9 are not
-started.
+**Stages 1–4 are done** — there is a real, installable debug APK (see "Building the Android app"
+below) with a Rust core, Keystore-backed biometric unlock, root detection, a decoy wallet and a
+real daemon-RPC client — tested live against the actual Monero mainnet — all wired through to a
+Compose screen on-device. **None of stage 3's Android security code has been run on a real device
+or emulator** — this sandbox has no Android runtime, only `gradle assembleDebug` and JVM unit
+tests (see THREAT_MODEL.md rows 5/9). Stages 5–9 are not started.
 
 | Stage | What it covers | Status |
 |---|---|---|
 | 1 | Rust workspace, `monero-oxide`-backed key management, scanning wrapper, encrypted storage, daemon trust boundary | **done** |
 | 2 | UniFFI bindings (`crates/ffi`) exposing stage 1 to Kotlin; cross-compiled `.so` for arm64-v8a/x86_64; minimal Compose screen proving generate→encrypt→persist→decrypt→restore works on-device | **done** (seed phrase support (25-word + Polyseed) via `monero-seed`/`monero-polyseed` deferred — see `crates/wallet-core/src/keys.rs`) |
 | 3 | Android security layer: Keystore-wrapped storage key, biometric/PIN unlock, root/emulator detection, auto-lock, decoy wallet | **done, unverified on-device** (not done: `dataExtractionRules` — turned out to be a no-op given `allowBackup=false`, see the manifest's comment; Play Integrity, which needs a Play Console project only the app's owner can create; inactivity-timeout auto-lock, only backgrounding is wired up; a settings UI for the wipe-after-N-failures toggle) |
-| 4 | Networking & privacy: embedded Tor (Arti), daemon RPC client wired to the `network` trust boundary, decoy selection, foreground sync service | not started |
+| 4 | Networking & privacy: embedded Tor (Arti), daemon RPC client wired to the `network` trust boundary, decoy selection, foreground sync service | **daemon RPC: done, tested live against real mainnet** (`crates/rpc`, cross-compiles for Android with tokio/hyper/rustls); **Tor: deliberately not attempted** — see `crates/rpc`'s module docs for why (this sandbox's network cannot reach Tor relays, so embedding Arti here could never be verified); decoy selection and a foreground sync service: not started |
 | 5 | Wallet features: subaddresses/accounts UI, `monero:` URIs, address book, view-only wallets, cold signing, encrypted backup | not started |
-| 6 | Jetpack Compose UI: onboarding, dashboard, send/receive, history, node manager, security settings | not started (stage 2's `MainActivity` is a throwaway smoke test, not this UI) |
+| 6 | Jetpack Compose UI: onboarding, dashboard, send/receive, history, node manager, security settings | not started (stage 2's `MainActivity` is a throwaway smoke test, not this UI — though as of stage 4 it's themed, see "UI theme" below) |
 | 7 | Charts (Vico): balance/flow/fee history, opt-in price chart | not started |
 | 8 | Testing: fuzzing, FFI integration tests, Compose/Espresso UI tests, MobSF scan | not started |
 | 9 | Release: reproducible builds, signing, F-Droid/Play assets, SECURITY.md, privacy policy | not started (current APK is debug-signed with Gradle's default debug key — not a release artifact) |
@@ -35,12 +35,16 @@ started.
 crates/
   wallet-core/   Key management, address derivation, output scanning (wraps monero-wallet)
   storage/       Argon2id + XChaCha20-Poly1305 encrypted wallet-file envelope
-  network/       Daemon RPC trust boundary (trait + validation; transport is stage 4)
+  network/       Daemon RPC trust boundary (trait + validation; real transport is crates/rpc)
+  rpc/           Real daemon RPC client (monero-oxide's own monero-simple-request-rpc);
+                 live-tested against a real Monero mainnet node (tests/live_node.rs, --ignored
+                 by default — see "Building" below to opt in)
 THREAT_MODEL.md  Threats mapped to mitigations, with honest done/planned status
 ```
 
 ```
-crates/ffi/           UniFFI bindings (crate name monero_wallet_ffi) over wallet-core + storage
+crates/ffi/           UniFFI bindings (crate name monero_wallet_ffi) over wallet-core, storage
+                       and rpc
 crates/uniffi-bindgen/ Standalone binding-generator binary (kept out of the cdylib build)
 app/                   Single Android module: a throwaway Compose smoke-test screen (stage 6
                        replaces this with the real onboarding/dashboard/send/receive UI)
@@ -105,6 +109,41 @@ the app's owner can create — not something buildable without their credentials
 settings screen to actually turn the wipe-after-N-failures policy on (it defaults to off and
 nothing in this smoke-test screen exposes the toggle yet).
 
+## What stage 4 actually gives you
+
+- `crates/rpc`: a `DaemonClient` implementing `network::DaemonRpc` against `monero-oxide`'s own
+  `monero-simple-request-rpc` — no custom RPC decoding. Fetches the chain height and validated,
+  scannable blocks; the latter feed directly into `wallet_core::scanning::WalletScanner`, so
+  real daemon data runs through real `monero-oxide` validation into our own scanner, not a mock.
+  This is tested **live against a real Monero mainnet node** (`crates/rpc/tests/live_node.rs`),
+  not just unit-tested against fixtures — see "Building" for how to opt into that test.
+- `network::HeightTracker`: a small stateful wrapper so a sync loop can reject a daemon reporting
+  a height that regresses, without hand-threading "the last height I saw" everywhere.
+- The Android app gained a "Check live chain height" button (`fetchChainHeight`, an async UniFFI
+  export) and the `INTERNET` permission it needs. `crates/rpc`'s full dependency tree — tokio,
+  hyper, rustls, ring — cross-compiles cleanly for both arm64-v8a and x86_64 via `cargo-ndk`; that
+  was the real open question stage 4 had to answer about whether a from-scratch Android wallet
+  can carry this networking stack at all, and it can.
+- **Tor was deliberately not attempted.** Arti needs real, arbitrary-port TCP to Tor relays and
+  directory authorities to bootstrap a circuit; this project's development sandbox only permits
+  HTTPS CONNECT to an allowlisted set of hosts on port 443 (confirmed: every non-443 connection
+  attempt came back as an immediate reset). Embedding a privacy-critical anonymity tool behind a
+  dependency that could never once be exercised — in an environment that can't tell a working
+  circuit from a silently broken one — would be worse than not shipping it. See `crates/rpc`'s
+  module docs for exactly where the integration seam is for whoever picks this up next, somewhere
+  that can actually reach the Tor network.
+
+## UI theme
+
+The smoke-test screen is styled after [Omarchy](https://github.com/basecamp/omarchy)'s
+"Tokyo Night" theme — dark, flat, bordered cards instead of soft drop-shadowed ones, monospace
+type (`FontFamily.Monospace`, so no font file needs bundling/licensing) — see
+`app/src/main/kotlin/.../ui/theme/`. This is a cosmetic choice for today's one throwaway screen,
+not a design system; stage 6's real UI should make its own call on visual direction rather than
+inherit this one by default. Omarchy ships 20+ themes (gruvbox, nord, catppuccin, matte-black,
+...); swapping `Color.kt`'s palette for another of its `colors.toml` files is a small, contained
+change if a different one is wanted.
+
 ## Building
 
 Rust workspace (always available, no Android toolchain needed):
@@ -113,6 +152,11 @@ Rust workspace (always available, no Android toolchain needed):
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets
+
+# Live network tests are --ignored by default (they hit a real public Monero node — see
+# crates/rpc's module docs for why that node runs on port 443 instead of the usual 18081/18089).
+# Opt in explicitly:
+cargo test -p rpc -p ffi -- --ignored
 ```
 
 Android app — needs the Android SDK/NDK, `cargo-ndk`, and the Android Rust targets:

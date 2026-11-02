@@ -4,6 +4,7 @@ members = [
   "crates/wallet-core",
   "crates/storage",
   "crates/network",
+  "crates/rpc",
   "crates/ffi",
   "crates/uniffi-bindgen",
 ]

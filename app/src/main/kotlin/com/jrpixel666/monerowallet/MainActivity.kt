@@ -15,8 +15,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -28,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -37,6 +44,8 @@ import com.jrpixel666.monerowallet.security.PinVault
 import com.jrpixel666.monerowallet.security.RootDetection
 import com.jrpixel666.monerowallet.security.SecureVault
 import com.jrpixel666.monerowallet.security.WalletFiles
+import com.jrpixel666.monerowallet.ui.theme.Omarchy
+import com.jrpixel666.monerowallet.ui.theme.OmarchyTheme
 import java.io.File
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -46,6 +55,7 @@ import kotlinx.coroutines.withContext
 import uniffi.monero_wallet_ffi.FfiNetwork
 import uniffi.monero_wallet_ffi.FfiWallet
 import uniffi.monero_wallet_ffi.WalletException
+import uniffi.monero_wallet_ffi.fetchChainHeight
 
 /**
  * Stage 1+2+3 smoke-test screen: proves the Rust core (via UniFFI) plus the Android security
@@ -66,8 +76,8 @@ class MainActivity : FragmentActivity() {
     window.decorView.filterTouchesWhenObscured = true
 
     setContent {
-      MaterialTheme {
-        Surface(modifier = Modifier.fillMaxSize()) {
+      OmarchyTheme {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
           WalletScreen(activity = this)
         }
       }
@@ -128,6 +138,9 @@ private fun WalletScreen(activity: FragmentActivity) {
   var usingDecoy by remember { mutableStateOf(false) }
   var pin by remember { mutableStateOf("") }
   var status by remember { mutableStateOf("") }
+  // A node this project verified reachable over HTTPS/443 during development — most public nodes
+  // listen on 18081/18089 instead, which this sandbox's network couldn't reach (see crates/rpc).
+  var daemonUrl by remember { mutableStateOf("https://xmr.kret.dev") }
 
   val rootSuspicious = remember { RootDetection.isDeviceSuspicious(context) }
   val pinVault = remember { PinVault(context) }
@@ -236,111 +249,181 @@ private fun WalletScreen(activity: FragmentActivity) {
   }
 
   Column(
-    modifier = Modifier.fillMaxSize().padding(24.dp),
-    verticalArrangement = Arrangement.spacedBy(16.dp),
+    modifier =
+      Modifier.fillMaxSize()
+        .verticalScroll(rememberScrollState())
+        .padding(horizontal = 20.dp, vertical = 28.dp),
+    verticalArrangement = Arrangement.spacedBy(18.dp),
   ) {
-    Text("Monero Wallet — stage 1-3 core smoke test", style = MaterialTheme.typography.titleMedium)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+      Text("MONERO WALLET", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+      Text(
+        "stage 1-4 core smoke test",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
 
     if (rootSuspicious) {
-      Text(
-        "Warning: this device looks rooted or is an emulator. Your keys may be less protected here.",
-        color = MaterialTheme.colorScheme.error,
-      )
+      OmarchySectionCard(borderColor = MaterialTheme.colorScheme.error) {
+        Text(
+          "WARNING: this device looks rooted or is an emulator.\nYour keys may be less protected here.",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.error,
+        )
+      }
     }
 
     if (status.isNotEmpty()) {
-      Text(status, style = MaterialTheme.typography.bodySmall)
+      Text("> $status", style = MaterialTheme.typography.bodySmall, color = Omarchy.DarkForeground)
+    }
+
+    OmarchySectionCard {
+      OmarchyLabel("DAEMON (STAGE 4, NO TOR YET — SEE crates/rpc DOCS)")
+      OmarchyTextField(value = daemonUrl, onValueChange = { daemonUrl = it }, label = "Daemon URL")
+      OutlinedButton(
+        onClick = {
+          scope.launch {
+            try {
+              val height = withContext(Dispatchers.IO) { fetchChainHeight(daemonUrl) }
+              status = "Chain height from $daemonUrl: $height"
+            } catch (e: WalletException) {
+              status = "Daemon request failed: ${e.message}"
+            }
+          }
+        },
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Text("Check live chain height")
+      }
     }
 
     if (LockState.locked) {
-      Text("Wallet is locked.")
+      OmarchySectionCard {
+        OmarchyLabel("WALLET LOCKED")
+        Button(onClick = { unlock(real = true) }, modifier = Modifier.fillMaxWidth()) {
+          Text("Unlock real wallet (biometrics)")
+        }
+        OutlinedButton(onClick = { unlock(real = false) }, modifier = Modifier.fillMaxWidth()) {
+          Text("Unlock decoy wallet (biometrics)")
+        }
 
-      Button(onClick = { unlock(real = true) }, modifier = Modifier.fillMaxWidth()) {
-        Text("Unlock real wallet (biometrics)")
-      }
-      Button(onClick = { unlock(real = false) }, modifier = Modifier.fillMaxWidth()) {
-        Text("Unlock decoy wallet (biometrics)")
-      }
-
-      OutlinedTextField(
-        value = pin,
-        onValueChange = { pin = it },
-        label = { Text("Or enter PIN") },
-        modifier = Modifier.fillMaxWidth(),
-      )
-      Button(
-        onClick = {
-          when (pinVault.check(pin)) {
-            PinVault.Match.REAL -> unlock(real = true)
-            PinVault.Match.DECOY -> unlock(real = false)
-            PinVault.Match.NONE -> status = "That PIN didn't match either wallet."
-          }
-        },
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Text("Open with PIN")
+        OmarchyTextField(value = pin, onValueChange = { pin = it }, label = "Or enter PIN")
+        OutlinedButton(
+          onClick = {
+            when (pinVault.check(pin)) {
+              PinVault.Match.REAL -> unlock(real = true)
+              PinVault.Match.DECOY -> unlock(real = false)
+              PinVault.Match.NONE -> status = "That PIN didn't match either wallet."
+            }
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Open with PIN")
+        }
       }
     } else {
-      Text("Address${if (usingDecoy) " (decoy wallet)" else ""}: ${address.ifEmpty { "(none yet)" }}")
-
-      Button(
-        onClick = {
-          val clipboard = context.getSystemService(ClipboardManager::class.java)
-          val clip = ClipData.newPlainText("Monero address", address)
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            clip.description.extras =
-              PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
-          }
-          clipboard.setPrimaryClip(clip)
-          status = "Address copied to clipboard."
-        },
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Text("Copy address")
+      OmarchySectionCard {
+        OmarchyLabel(if (usingDecoy) "ADDRESS (DECOY WALLET)" else "ADDRESS")
+        Text(
+          address.ifEmpty { "(none yet)" },
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurface,
+        )
+        OutlinedButton(
+          onClick = {
+            val clipboard = context.getSystemService(ClipboardManager::class.java)
+            val clip = ClipData.newPlainText("Monero address", address)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+              clip.description.extras =
+                PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+            }
+            clipboard.setPrimaryClip(clip)
+            status = "Address copied to clipboard."
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Copy address")
+        }
       }
 
-      Button(
-        onClick = {
-          scope.launch {
-            val newWallet = withContext(Dispatchers.Default) { FfiWallet.generate() }
+      OmarchySectionCard {
+        OmarchyLabel("ACTIONS")
+
+        Button(
+          onClick = {
+            scope.launch {
+              val newWallet = withContext(Dispatchers.Default) { FfiWallet.generate() }
+              wallet?.close()
+              wallet = newWallet
+              address = newWallet.primaryAddress(FfiNetwork.MAINNET)
+              usingDecoy = false
+              status = "Generated a new wallet. Not yet saved."
+            }
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Generate new wallet")
+        }
+
+        OmarchyTextField(value = pin, onValueChange = { pin = it }, label = "PIN to open this wallet later (optional)")
+
+        OutlinedButton(onClick = { protectAndSave(real = true) }, modifier = Modifier.fillMaxWidth()) {
+          Text("Protect & save as REAL wallet")
+        }
+        OutlinedButton(onClick = { protectAndSave(real = false) }, modifier = Modifier.fillMaxWidth()) {
+          Text("Protect & save as DECOY wallet")
+        }
+        OutlinedButton(
+          onClick = {
             wallet?.close()
-            wallet = newWallet
-            address = newWallet.primaryAddress(FfiNetwork.MAINNET)
-            usingDecoy = false
-            status = "Generated a new wallet. Not yet saved."
-          }
-        },
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Text("Generate new wallet")
-      }
-
-      OutlinedTextField(
-        value = pin,
-        onValueChange = { pin = it },
-        label = { Text("PIN to open this wallet later (optional)") },
-        modifier = Modifier.fillMaxWidth(),
-      )
-
-      Button(onClick = { protectAndSave(real = true) }, modifier = Modifier.fillMaxWidth()) {
-        Text("Protect & save as REAL wallet")
-      }
-      Button(onClick = { protectAndSave(real = false) }, modifier = Modifier.fillMaxWidth()) {
-        Text("Protect & save as DECOY wallet")
-      }
-
-      Button(
-        onClick = {
-          wallet?.close()
-          wallet = null
-          address = ""
-          LockState.locked = true
-          status = "Locked."
-        },
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Text("Lock now")
+            wallet = null
+            address = ""
+            LockState.locked = true
+            status = "Locked."
+          },
+          modifier = Modifier.fillMaxWidth(),
+          colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+        ) {
+          Text("Lock now")
+        }
       }
     }
   }
+}
+
+/** A flat, bordered card — Omarchy's terminal-window aesthetic, not a soft drop-shadowed one. */
+@Composable
+private fun OmarchySectionCard(
+  borderColor: androidx.compose.ui.graphics.Color = Omarchy.Muted,
+  content: @Composable () -> Unit,
+) {
+  OutlinedCard(
+    modifier = Modifier.fillMaxWidth(),
+    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(borderColor)),
+  ) {
+    Column(
+      modifier = Modifier.fillMaxWidth().padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      content()
+    }
+  }
+}
+
+@Composable
+private fun OmarchyLabel(text: String) {
+  Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun OmarchyTextField(value: String, onValueChange: (String) -> Unit, label: String) {
+  OutlinedTextField(
+    value = value,
+    onValueChange = onValueChange,
+    label = { Text(label, style = MaterialTheme.typography.bodySmall) },
+    textStyle = MaterialTheme.typography.bodyMedium,
+    modifier = Modifier.fillMaxWidth(),
+  )
 }

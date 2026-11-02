@@ -14,6 +14,12 @@ name = "monero_wallet_ffi"
 [dependencies]
 wallet-core = { path = "../wallet-core" }
 storage = { path = "../storage" }
+rpc = { path = "../rpc" }
+network = { path = "../network" }
 uniffi = "0.28"
 thiserror = "2"
 zeroize = { version = "1", default-features = false, features = ["alloc"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
