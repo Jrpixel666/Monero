@@ -10,13 +10,14 @@ the next starts; nothing is marked done until it actually builds and has a test 
 
 ## Status
 
-**Stages 1–5 are done** — there is a real, installable debug APK (see "Building the Android app"
-below) with a Rust core, Keystore-backed biometric unlock, root detection, a decoy wallet, a real
-daemon-RPC client tested live against the actual Monero mainnet, subaddresses, view-only wallets,
-`monero:` URI parsing and a local address book, all wired through to a Compose screen on-device.
-**None of the Android-only security code has been run on a real device or emulator** — this
-sandbox has no Android runtime, only `gradle assembleDebug` and JVM unit tests (see
-THREAT_MODEL.md rows 5/9). Stages 6–9 are not started.
+**Stages 1–5 are done**, and stage 8 has a real, if partial, start — there is a real, installable
+debug APK (see "Building the Android app" below) with a Rust core, Keystore-backed biometric
+unlock, root detection, a decoy wallet, a real daemon-RPC client tested live against the actual
+Monero mainnet, subaddresses, view-only wallets, `monero:` URI parsing and a local address book,
+all wired through to a Compose screen on-device. **None of the Android-only security code has
+been run on a real device or emulator** — this sandbox has no Android runtime, only
+`gradle assembleDebug` and JVM unit tests (see THREAT_MODEL.md rows 5/9). Stages 6, 7 and 9 are
+not started.
 
 | Stage | What it covers | Status |
 |---|---|---|
@@ -27,7 +28,7 @@ THREAT_MODEL.md rows 5/9). Stages 6–9 are not started.
 | 5 | Wallet features: subaddresses/accounts UI, `monero:` URIs, address book, view-only wallets, cold signing, encrypted backup | subaddresses, `monero:` URI parsing, view-only wallets, a local address book: **done**, see "What stage 5 actually gives you"; fee priorities: live-tested at the Rust layer (`rpc::DaemonClient::fee_rate`) but not surfaced in the UI (no send flow to attach it to); cold signing (animated QR/UR), multisig: not started — both substantial, separately-scoped future work |
 | 6 | Jetpack Compose UI: onboarding, dashboard, send/receive, history, node manager, security settings | not started (stage 2's `MainActivity` is a throwaway smoke test, not this UI — though as of stage 4 it's themed, see "UI theme" below) |
 | 7 | Charts (Vico): balance/flow/fee history, opt-in price chart | not started |
-| 8 | Testing: fuzzing, FFI integration tests, Compose/Espresso UI tests, MobSF scan | not started |
+| 8 | Testing: fuzzing, FFI integration tests, Compose/Espresso UI tests, MobSF scan | **fuzzing: started and already paid for itself** — `fuzz/` (3 targets: URI parsing, address parsing, wallet-file decryption) found and fixed a real bug, see "What stage 8 actually gives you"; FFI integration tests exist as part of `crates/ffi`'s own test suite; Compose/Espresso UI tests and MobSF: not started (need a running emulator/device, which this sandbox doesn't have) |
 | 9 | Release: reproducible builds, signing, F-Droid/Play assets, SECURITY.md, privacy policy | not started (current APK is debug-signed with Gradle's default debug key — not a release artifact) |
 
 ## Repository layout
@@ -156,6 +157,40 @@ nothing in this smoke-test screen exposes the toggle yet).
   address is already public the moment it's shared), so app-private storage's existing protection
   against other apps (THREAT_MODEL.md #1) is the actual threat this needs to resist, not a reason
   to pull Argon2id into a labeled-contacts feature.
+
+## What stage 8 actually gives you
+
+`fuzz/` (a standard `cargo-fuzz` project, excluded from the main workspace since it needs
+nightly-only sanitizer flags — see its own `Cargo.toml`) has three targets:
+
+- `fuzz_uri_parse`: `wallet_core::uri::parse` against arbitrary bytes.
+- `fuzz_address_parse`: `monero-oxide`'s own address decoder, as exercised through this project's
+  pinned dependency — its own upstream fuzzing/audits cover the decoder itself; this is cheap
+  insurance that this project's specific version + feature flags don't add a panic path of their
+  own.
+- `fuzz_storage_decrypt`: `storage::decrypt` against arbitrary bytes, standing in for a corrupted
+  or maliciously crafted wallet backup file.
+
+**This already found and fixed a real bug.** `fuzz_storage_decrypt` found that `m_cost` (Argon2id
+memory cost) was read straight from the envelope's header bytes — untrusted input from whatever
+file gets handed to `decrypt` — with no upper bound, then passed directly to
+`argon2::Params::new`. A crafted or corrupted wallet file could set it high enough to make Argon2
+attempt a multi-terabyte allocation, aborting the process. Fixed in `crates/storage/src/lib.rs`
+(`MAX_M_COST_KIB`/`MAX_T_COST`/`MAX_P_COST` ceilings, checked before key derivation ever runs),
+with a regression test. Run it yourself:
+
+```sh
+rustup toolchain install nightly
+cargo install cargo-fuzz
+cargo +nightly fuzz run fuzz_storage_decrypt -- -max_total_time=30
+cargo +nightly fuzz run fuzz_uri_parse -- -max_total_time=30
+cargo +nightly fuzz run fuzz_address_parse -- -max_total_time=30
+```
+
+What's not done: this is three targets covering this project's own hand-written parsing code, run
+for seconds-to-minutes locally, not a continuously-running fuzzing setup (e.g. OSS-Fuzz) that
+accumulates corpus and coverage over weeks; Compose/Espresso UI tests and a MobSF scan both need
+a running emulator or device, which this sandbox doesn't have.
 
 ## UI theme
 

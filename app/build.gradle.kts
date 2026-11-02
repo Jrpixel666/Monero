@@ -12,8 +12,8 @@ android {
     applicationId = "com.jrpixel666.monerowallet"
     minSdk = 29
     targetSdk = 36
-    versionCode = 4
-    versionName = "0.1.0-stage5"
+    versionCode = 5
+    versionName = "0.1.0-stage5-fuzzfix"
 
     // Must match the ABIs cargo-ndk was told to build (see README.md). Without this, Gradle
     // happily packages JNA's native dispatch libs for armeabi-v7a/x86/mips/etc. even though our

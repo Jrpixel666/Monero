@@ -33,6 +33,23 @@ const DEFAULT_M_COST_KIB: u32 = 19 * 1024;
 const DEFAULT_T_COST: u32 = 2;
 const DEFAULT_P_COST: u8 = 1;
 
+/// Hard ceilings on the Argon2id parameters a *decrypted* envelope's header is allowed to
+/// request, found by fuzzing: `m_cost`/`t_cost` are read directly from untrusted file bytes and
+/// handed to `argon2::Params::new`, which trusts them. Before this bound existed, a corrupted or
+/// malicious wallet file (e.g. a tampered backup) could set `m_cost` high enough to request a
+/// multi-terabyte allocation, aborting the process outright (confirmed via `fuzz/`:
+/// `cargo +nightly fuzz run fuzz_storage_decrypt`). These ceilings are generous — 16x this
+/// crate's own default — specifically so they never reject a file this crate itself produced,
+/// only ones crafted or corrupted to be hostile.
+const MAX_M_COST_KIB: u32 = DEFAULT_M_COST_KIB * 16;
+const MAX_T_COST: u32 = 64;
+const MAX_P_COST: u8 = 16;
+
+// A file this crate produces must always be decryptable by this crate's own bounds check.
+const _: () = assert!(DEFAULT_M_COST_KIB <= MAX_M_COST_KIB);
+const _: () = assert!(DEFAULT_T_COST <= MAX_T_COST);
+const _: () = assert!(DEFAULT_P_COST <= MAX_P_COST);
+
 /// Errors opening or creating an encrypted wallet file.
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -42,6 +59,10 @@ pub enum StorageError {
   /// Key derivation failed (e.g. parameters in the file are internally inconsistent).
   #[error("key derivation failed")]
   KeyDerivation,
+  /// The envelope's header requested Argon2id parameters past this crate's sanity ceiling —
+  /// either corrupted or crafted to make opening the file expensive or crash the process.
+  #[error("wallet file requested unreasonable key-derivation parameters")]
+  ParametersOutOfBounds,
   /// Decryption failed. Deliberately not distinguished from "file corrupted" to avoid acting as
   /// a password-correctness oracle beyond what AEAD failure already reveals.
   #[error("incorrect password or corrupted wallet file")]
@@ -101,6 +122,9 @@ pub fn decrypt(password: &[u8], envelope: &[u8]) -> Result<Zeroizing<Vec<u8>>, S
   let m_cost = u32::from_le_bytes(envelope[5..9].try_into().unwrap());
   let t_cost = u32::from_le_bytes(envelope[9..13].try_into().unwrap());
   let p_cost = envelope[13];
+  if m_cost > MAX_M_COST_KIB || t_cost > MAX_T_COST || p_cost > MAX_P_COST {
+    return Err(StorageError::ParametersOutOfBounds);
+  }
   let salt: [u8; SALT_LEN] = envelope[14..14 + SALT_LEN].try_into().unwrap();
   let nonce_start = 14 + SALT_LEN;
   let nonce_bytes: [u8; NONCE_LEN] =
@@ -158,5 +182,29 @@ mod tests {
     let a = encrypt(b"password", b"secret").unwrap();
     let b = encrypt(b"password", b"secret").unwrap();
     assert_ne!(a, b, "fresh salt/nonce must make ciphertexts unlinkable");
+  }
+
+  /// Regression test for a crash `fuzz/fuzz_targets/fuzz_storage_decrypt.rs` found: a header
+  /// with an absurd `m_cost` used to reach `argon2::Params::new`/`hash_password_into` and abort
+  /// the process attempting a multi-terabyte allocation, rather than returning an `Err`.
+  #[test]
+  fn absurd_m_cost_in_the_header_is_rejected_without_attempting_key_derivation() {
+    let mut envelope = encrypt(b"password", b"secret").unwrap();
+    envelope[5..9].copy_from_slice(&u32::MAX.to_le_bytes()); // m_cost
+    assert!(matches!(decrypt(b"password", &envelope), Err(StorageError::ParametersOutOfBounds)));
+  }
+
+  #[test]
+  fn absurd_t_cost_in_the_header_is_rejected() {
+    let mut envelope = encrypt(b"password", b"secret").unwrap();
+    envelope[9..13].copy_from_slice(&u32::MAX.to_le_bytes()); // t_cost
+    assert!(matches!(decrypt(b"password", &envelope), Err(StorageError::ParametersOutOfBounds)));
+  }
+
+  #[test]
+  fn absurd_p_cost_in_the_header_is_rejected() {
+    let mut envelope = encrypt(b"password", b"secret").unwrap();
+    envelope[13] = u8::MAX; // p_cost
+    assert!(matches!(decrypt(b"password", &envelope), Err(StorageError::ParametersOutOfBounds)));
   }
 }

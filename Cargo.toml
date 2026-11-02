@@ -8,6 +8,9 @@ members = [
   "crates/ffi",
   "crates/uniffi-bindgen",
 ]
+# fuzz/ is its own standalone crate (cargo-fuzz convention): it needs nightly-only sanitizer
+# flags this workspace's other members don't, so it's excluded rather than made a member.
+exclude = ["fuzz"]
 
 [profile.release]
 # Never strip/optimize away panics in a wallet handling secrets; a controlled abort beats

@@ -16,3 +16,9 @@ captures/
 /app/src/main/jniLibs/
 /app/src/main/kotlin-gen/
 
+# cargo-fuzz build output and generated corpus/crash artifacts — the fuzz targets themselves
+# (fuzz/Cargo.toml, fuzz/fuzz_targets/*.rs) are the part worth keeping in the repo.
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+
