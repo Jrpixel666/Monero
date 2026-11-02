@@ -12,8 +12,8 @@ android {
     applicationId = "com.jrpixel666.monerowallet"
     minSdk = 29
     targetSdk = 36
-    versionCode = 1
-    versionName = "0.1.0-stage2"
+    versionCode = 2
+    versionName = "0.1.0-stage3"
 
     // Must match the ABIs cargo-ndk was told to build (see README.md). Without this, Gradle
     // happily packages JNA's native dispatch libs for armeabi-v7a/x86/mips/etc. even though our
@@ -70,6 +70,16 @@ dependencies {
   implementation("androidx.activity:activity-compose:1.9.3")
   implementation("androidx.core:core-ktx:1.13.1")
   implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+  implementation("androidx.lifecycle:lifecycle-process:2.8.6")
+  implementation("androidx.fragment:fragment-ktx:1.8.4")
+  implementation("androidx.biometric:biometric:1.1.0")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
   implementation("net.java.dev.jna:jna:5.14.0@aar")
+
+  testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
+  testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.3")
+}
+
+tasks.withType<Test> {
+  useJUnitPlatform()
 }

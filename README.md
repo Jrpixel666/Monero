@@ -10,17 +10,18 @@ the next starts; nothing is marked done until it actually builds and has a test 
 
 ## Status
 
-**Stages 1 and 2 are done** — there is a real, installable debug APK (see "Building the Android
-app" below) with a Rust core wired all the way through to a Compose screen on-device. Stages
-3–9 are not started; the parts of stage 3/6 that a minimal app needed to exist at all (no
-plaintext-backup manifest flag, `FLAG_SECURE`) were applied opportunistically and are called out
-as such below — they are not the full stage 3/6 scope.
+**Stages 1, 2 and 3 are done** — there is a real, installable debug APK (see "Building the Android
+app" below) with a Rust core, Keystore-backed biometric unlock, root detection and a decoy wallet
+all wired through to a Compose screen on-device, **but none of stage 3's Android security code has
+been run on a real device or emulator** — this sandbox has no Android runtime, only
+`gradle assembleDebug` and JVM unit tests (see THREAT_MODEL.md rows 5/9). Stages 4–9 are not
+started.
 
 | Stage | What it covers | Status |
 |---|---|---|
 | 1 | Rust workspace, `monero-oxide`-backed key management, scanning wrapper, encrypted storage, daemon trust boundary | **done** |
 | 2 | UniFFI bindings (`crates/ffi`) exposing stage 1 to Kotlin; cross-compiled `.so` for arm64-v8a/x86_64; minimal Compose screen proving generate→encrypt→persist→decrypt→restore works on-device | **done** (seed phrase support (25-word + Polyseed) via `monero-seed`/`monero-polyseed` deferred — see `crates/wallet-core/src/keys.rs`) |
-| 3 | Android security layer: Keystore-wrapped storage key, biometric/PIN unlock, root/emulator detection, auto-lock, decoy wallet | not started (`allowBackup=false` and `FLAG_SECURE` landed early, as part of stage 2's screen — not the rest of this stage) |
+| 3 | Android security layer: Keystore-wrapped storage key, biometric/PIN unlock, root/emulator detection, auto-lock, decoy wallet | **done, unverified on-device** (not done: `dataExtractionRules` — turned out to be a no-op given `allowBackup=false`, see the manifest's comment; Play Integrity, which needs a Play Console project only the app's owner can create; inactivity-timeout auto-lock, only backgrounding is wired up; a settings UI for the wipe-after-N-failures toggle) |
 | 4 | Networking & privacy: embedded Tor (Arti), daemon RPC client wired to the `network` trust boundary, decoy selection, foreground sync service | not started |
 | 5 | Wallet features: subaddresses/accounts UI, `monero:` URIs, address book, view-only wallets, cold signing, encrypted backup | not started |
 | 6 | Jetpack Compose UI: onboarding, dashboard, send/receive, history, node manager, security settings | not started (stage 2's `MainActivity` is a throwaway smoke test, not this UI) |
@@ -77,6 +78,32 @@ without that foundation would mean writing code against an API that's about to c
 - A real Android app (`app/`) with one screen: generate a wallet, see its address, save it
   encrypted to app-private storage, load it back. This exists to prove the FFI plumbing works
   on-device, not as the wallet's actual UI (that's stage 6).
+
+## What stage 3 actually gives you
+
+- `security/SecureVault.kt`: wraps a random 32-byte "device password" with a hardware-backed
+  (StrongBox-preferred, TEE fallback) Android Keystore AES-GCM key requiring biometric or device-
+  credential authentication. The wallet's real secret-at-rest protection is still stage 1's
+  Argon2id + XChaCha20-Poly1305 (`crates/storage`, done in Rust) — this is what lets a human
+  unlock that without typing or remembering the random password themselves.
+- `security/PinVault.kt` + `WalletFiles`: a typed PIN selects between two independently-protected
+  wallet files (real/decoy); biometric authentication still gates the actual key unwrap either
+  way, so the PIN alone never bypasses hardware-backed auth.
+- `security/RootDetection.kt`: unit-tested root/emulator heuristics (`su` binary paths, build
+  tags, known root-manager packages, emulator fingerprints), surfaced as a non-blocking warning.
+- `security/FailedAttemptTracker.kt`: opt-in (default off) wipe of a wallet's files after N
+  consecutive failed unlocks.
+- `WalletApplication.kt` + `LockState`: the whole process leaving the foreground re-locks the
+  wallet; reopening it requires authenticating again.
+- Manifest/UI hardening: `FLAG_SECURE`, `filterTouchesWhenObscured`, `MARK_AS_SENSITIVE` on the
+  one clipboard copy this app does, no `INTERNET` permission (there's nothing to use it for yet).
+
+**What this does not include**, and why: `dataExtractionRules` (a no-op once `allowBackup=false`
+is set — see the manifest comment); Play Integrity (needs a Google Play Console project that only
+the app's owner can create — not something buildable without their credentials); an inactivity-
+*timeout* auto-lock as opposed to lock-on-backgrounding (needs a timer + settings UI, stage 6); a
+settings screen to actually turn the wipe-after-N-failures policy on (it defaults to off and
+nothing in this smoke-test screen exposes the toggle yet).
 
 ## Building
 

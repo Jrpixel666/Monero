@@ -1,10 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+         No INTERNET permission: this stage has no networking (see README.md stage 4). Adding it
+         only once a daemon-RPC client actually exists keeps "minimum permissions" (THREAT_MODEL.md)
+         honest rather than aspirational.
+    -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
     <application
+        android:name=".WalletApplication"
         android:label="Monero Wallet"
         android:allowBackup="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <!--
+             android:allowBackup="false" disables both cloud (key/value and auto) backup and
+             device-to-device transfer for this app outright; a dataExtractionRules resource is
+             only consulted when allowBackup is true, so adding one here would be a no-op left in
+             to look thorough rather than because it does anything.
+        -->
 
         <activity
             android:name=".MainActivity"
