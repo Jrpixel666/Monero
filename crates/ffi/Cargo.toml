@@ -20,6 +20,7 @@ uniffi = "0.28"
 thiserror = "2"
 zeroize = { version = "1", default-features = false, features = ["alloc"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
+hex = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

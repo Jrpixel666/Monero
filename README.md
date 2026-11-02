@@ -10,12 +10,13 @@ the next starts; nothing is marked done until it actually builds and has a test 
 
 ## Status
 
-**Stages 1–4 are done** — there is a real, installable debug APK (see "Building the Android app"
-below) with a Rust core, Keystore-backed biometric unlock, root detection, a decoy wallet and a
-real daemon-RPC client — tested live against the actual Monero mainnet — all wired through to a
-Compose screen on-device. **None of stage 3's Android security code has been run on a real device
-or emulator** — this sandbox has no Android runtime, only `gradle assembleDebug` and JVM unit
-tests (see THREAT_MODEL.md rows 5/9). Stages 5–9 are not started.
+**Stages 1–5 are done** — there is a real, installable debug APK (see "Building the Android app"
+below) with a Rust core, Keystore-backed biometric unlock, root detection, a decoy wallet, a real
+daemon-RPC client tested live against the actual Monero mainnet, subaddresses, view-only wallets,
+`monero:` URI parsing and a local address book, all wired through to a Compose screen on-device.
+**None of the Android-only security code has been run on a real device or emulator** — this
+sandbox has no Android runtime, only `gradle assembleDebug` and JVM unit tests (see
+THREAT_MODEL.md rows 5/9). Stages 6–9 are not started.
 
 | Stage | What it covers | Status |
 |---|---|---|
@@ -23,7 +24,7 @@ tests (see THREAT_MODEL.md rows 5/9). Stages 5–9 are not started.
 | 2 | UniFFI bindings (`crates/ffi`) exposing stage 1 to Kotlin; cross-compiled `.so` for arm64-v8a/x86_64; minimal Compose screen proving generate→encrypt→persist→decrypt→restore works on-device | **done** (seed phrase support (25-word + Polyseed) via `monero-seed`/`monero-polyseed` deferred — see `crates/wallet-core/src/keys.rs`) |
 | 3 | Android security layer: Keystore-wrapped storage key, biometric/PIN unlock, root/emulator detection, auto-lock, decoy wallet | **done, unverified on-device** (not done: `dataExtractionRules` — turned out to be a no-op given `allowBackup=false`, see the manifest's comment; Play Integrity, which needs a Play Console project only the app's owner can create; inactivity-timeout auto-lock, only backgrounding is wired up; a settings UI for the wipe-after-N-failures toggle) |
 | 4 | Networking & privacy: embedded Tor (Arti), daemon RPC client wired to the `network` trust boundary, decoy selection, foreground sync service | **daemon RPC: done, tested live against real mainnet** (`crates/rpc`, cross-compiles for Android with tokio/hyper/rustls); **Tor: deliberately not attempted** — see `crates/rpc`'s module docs for why (this sandbox's network cannot reach Tor relays, so embedding Arti here could never be verified); decoy selection and a foreground sync service: not started |
-| 5 | Wallet features: subaddresses/accounts UI, `monero:` URIs, address book, view-only wallets, cold signing, encrypted backup | not started |
+| 5 | Wallet features: subaddresses/accounts UI, `monero:` URIs, address book, view-only wallets, cold signing, encrypted backup | subaddresses, `monero:` URI parsing, view-only wallets, a local address book: **done**, see "What stage 5 actually gives you"; fee priorities: live-tested at the Rust layer (`rpc::DaemonClient::fee_rate`) but not surfaced in the UI (no send flow to attach it to); cold signing (animated QR/UR), multisig: not started — both substantial, separately-scoped future work |
 | 6 | Jetpack Compose UI: onboarding, dashboard, send/receive, history, node manager, security settings | not started (stage 2's `MainActivity` is a throwaway smoke test, not this UI — though as of stage 4 it's themed, see "UI theme" below) |
 | 7 | Charts (Vico): balance/flow/fee history, opt-in price chart | not started |
 | 8 | Testing: fuzzing, FFI integration tests, Compose/Espresso UI tests, MobSF scan | not started |
@@ -132,6 +133,29 @@ nothing in this smoke-test screen exposes the toggle yet).
   circuit from a silently broken one — would be worse than not shipping it. See `crates/rpc`'s
   module docs for exactly where the integration seam is for whoever picks this up next, somewhere
   that can actually reach the Tor network.
+
+## What stage 5 actually gives you
+
+- `wallet_core::keys::ViewOnlyWallet`: a watch-only companion built from a public spend key +
+  private view key (both exportable from a full `SpendKey`). Can derive addresses; cannot sign —
+  there is no spend key in it to sign with. Exposed over FFI as `FfiViewOnlyWallet`.
+- Subaddresses: `SpendKey::subaddress`/`ViewOnlyWallet::subaddress` were already in `wallet-core`
+  since stage 1; this stage is what exposes them over FFI and gives the app a button to derive
+  and list them, instead of only deriving the primary address.
+- `wallet_core::uri`: `monero:` payment URI parsing (address + `tx_amount`/`tx_description`/
+  `recipient_name`), per the de facto scheme documented at
+  [monero-project/meta](https://github.com/monero-project/meta/blob/master/URI_Scheme.md).
+  Amounts are parsed as fixed-point integer math, never through a float — `0.1 + 0.2 != 0.3` in
+  binary floating point, which is not a mistake a payment amount parser gets to make.
+- `rpc::DaemonClient::fee_rate`: live-tested against the real node alongside height and block
+  fetching. Not yet surfaced in the app — a fee priority picker means nothing without a send flow
+  to spend it on, and building that (decoy selection + `monero-wallet`'s `send` module) is a
+  separate, larger undertaking than this stage's scope.
+- `app/.../AddressBook.kt`: a local, labeled address book. Plain JSON in app-private storage, not
+  `storage::encrypt`-protected — addresses and labels aren't secret the way a spend key is (an
+  address is already public the moment it's shared), so app-private storage's existing protection
+  against other apps (THREAT_MODEL.md #1) is the actual threat this needs to resist, not a reason
+  to pull Argon2id into a labeled-contacts feature.
 
 ## UI theme
 

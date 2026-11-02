@@ -15,6 +15,9 @@ curve25519-dalek = { version = "4", default-features = false, features = ["alloc
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive", "alloc"] }
 rand_core = { version = "0.6", default-features = false, features = ["std", "getrandom"] }
 thiserror = "2"
+# Not crypto -- just percent-decoding for monero: URI query values. The de facto standard crate
+# for it (used throughout the Rust URL/web ecosystem), rather than hand-rolling a decoder.
+percent-encoding = "2"
 
 [dev-dependencies]
 hex = "0.4"

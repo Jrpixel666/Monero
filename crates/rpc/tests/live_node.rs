@@ -14,7 +14,7 @@
 //! cannot reach, per `crates/rpc`'s module docs) can be overridden with `MONERO_TEST_NODE_URL` if
 //! it goes offline.
 
-use rpc::DaemonClient;
+use rpc::{DaemonClient, FeePriority};
 use wallet_core::{keys::SpendKey, scanning::WalletScanner};
 
 fn node_url() -> String {
@@ -59,4 +59,19 @@ async fn fetches_and_scans_a_real_block_with_our_wallet_scanner() {
     wallet_core::scanning::spendable_outputs(timelocked).is_empty(),
     "a freshly generated wallet should not own any outputs in a real historical block"
   );
+}
+
+#[tokio::test]
+#[ignore = "hits a real third-party Monero node; opt in with: cargo test -p rpc -- --ignored"]
+async fn fetches_a_real_fee_rate() {
+  let client = DaemonClient::connect(node_url()).await.expect("failed to connect to test node");
+
+  // A generous ceiling for this test's purposes only -- not a recommendation for what a real
+  // wallet should use, which needs its own historical-fee-based policy (see crates/rpc's docs).
+  let max_per_weight = 10_000_000_000;
+  let fee_rate = client
+    .fee_rate(FeePriority::Normal, max_per_weight)
+    .await
+    .expect("fee_rate failed or exceeded the sanity ceiling");
+  assert!(fee_rate.per_weight() > 0, "a real daemon should report a nonzero fee rate");
 }

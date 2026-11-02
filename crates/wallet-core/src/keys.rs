@@ -18,16 +18,19 @@ use zeroize::Zeroizing;
 
 use monero_wallet::{
   address::{MoneroAddress, Network, SubaddressIndex},
-  ed25519::{Point, Scalar},
+  ed25519::{CompressedPoint, Point, Scalar},
   ViewPair, ViewPairError,
 };
 
-/// Errors constructing or using a [`SpendKey`].
+/// Errors constructing or using a [`SpendKey`] or [`ViewOnlyWallet`].
 #[derive(Debug, Error)]
 pub enum KeyError {
   /// The supplied bytes were not a canonical, validly-encoded scalar.
-  #[error("malformed spend key encoding: {0}")]
+  #[error("malformed key encoding: {0}")]
   Malformed(std::io::Error),
+  /// The supplied bytes decoded but do not encode a valid point on the curve.
+  #[error("invalid point encoding")]
+  InvalidPoint,
   /// The derived view pair was invalid (torsioned spend key).
   #[error(transparent)]
   ViewPair(#[from] ViewPairError),
@@ -110,6 +113,67 @@ impl SpendKey {
   ) -> Result<MoneroAddress, KeyError> {
     Ok(self.view_pair()?.subaddress(network, index))
   }
+
+  /// This wallet's public spend key. Safe to share — every address already encodes it — and,
+  /// combined with [`SpendKey::export_private_view_key`], what a [`ViewOnlyWallet`] companion is
+  /// built from.
+  pub fn public_spend_key_bytes(&self) -> [u8; 32] {
+    self.public_spend_point().compress().to_bytes()
+  }
+
+  /// Export the private view key. Unlike the spend key, sharing this is a deliberate, named
+  /// action a real wallet exposes deliberately — e.g. for an auditor or a watch-only companion
+  /// device — since it lets the holder see incoming funds, not spend them.
+  pub fn export_private_view_key(&self) -> Zeroizing<[u8; 32]> {
+    let view_scalar = self.private_view_key();
+    let mut buf = Zeroizing::new(Vec::with_capacity(32));
+    view_scalar.write(&mut *buf).expect("writing to an in-memory Vec cannot fail");
+    let mut out = Zeroizing::new([0u8; 32]);
+    out.copy_from_slice(&buf);
+    out
+  }
+}
+
+/// A view-only wallet: can derive addresses and (once wired to a scanner) detect incoming
+/// outputs, but holds no spend key and so cannot sign a transaction. Built from a public spend
+/// key and a private view key — see [`SpendKey::public_spend_key_bytes`] and
+/// [`SpendKey::export_private_view_key`].
+pub struct ViewOnlyWallet {
+  view_pair: ViewPair,
+}
+
+impl ViewOnlyWallet {
+  /// Construct from a public spend key and private view key, as exported by a full [`SpendKey`].
+  pub fn from_keys(
+    public_spend_key: [u8; 32],
+    private_view_key: Zeroizing<[u8; 32]>,
+  ) -> Result<Self, KeyError> {
+    let mut spend_reader: &[u8] = &public_spend_key[..];
+    let spend_point = CompressedPoint::read(&mut spend_reader)
+      .map_err(KeyError::Malformed)?
+      .decompress()
+      .ok_or(KeyError::InvalidPoint)?;
+
+    let mut view_reader: &[u8] = &private_view_key[..];
+    let view_scalar = Zeroizing::new(Scalar::read(&mut view_reader).map_err(KeyError::Malformed)?);
+
+    Ok(Self { view_pair: ViewPair::new(spend_point, view_scalar)? })
+  }
+
+  /// The underlying `monero-oxide` view pair, e.g. to hand to a [`crate::scanning::WalletScanner`].
+  pub fn view_pair(&self) -> &ViewPair {
+    &self.view_pair
+  }
+
+  /// This wallet's primary (non-sub) address.
+  pub fn primary_address(&self, network: Network) -> MoneroAddress {
+    self.view_pair.legacy_address(network)
+  }
+
+  /// Derive a subaddress at the given account/address index.
+  pub fn subaddress(&self, network: Network, index: SubaddressIndex) -> MoneroAddress {
+    self.view_pair.subaddress(network, index)
+  }
 }
 
 #[cfg(test)]
@@ -158,5 +222,31 @@ mod tests {
     let rendered = format!("{key:?}");
     assert!(!rendered.contains("scalar: Scalar"));
     assert!(rendered.contains("redacted"));
+  }
+
+  #[test]
+  fn view_only_wallet_derives_the_same_addresses_as_the_full_wallet() {
+    let key = SpendKey::generate();
+    let view_only =
+      ViewOnlyWallet::from_keys(key.public_spend_key_bytes(), key.export_private_view_key()).unwrap();
+
+    assert_eq!(
+      key.primary_address(Network::Mainnet).unwrap(),
+      view_only.primary_address(Network::Mainnet)
+    );
+
+    let index = SubaddressIndex::new(1, 2).unwrap();
+    assert_eq!(
+      key.subaddress(Network::Mainnet, index).unwrap(),
+      view_only.subaddress(Network::Mainnet, index)
+    );
+  }
+
+  #[test]
+  fn view_only_wallet_rejects_garbage_point_bytes() {
+    // All-0xFF is not a valid compressed Edwards point encoding.
+    let garbage_spend_key = [0xFFu8; 32];
+    let key = SpendKey::generate();
+    assert!(ViewOnlyWallet::from_keys(garbage_spend_key, key.export_private_view_key()).is_err());
   }
 }

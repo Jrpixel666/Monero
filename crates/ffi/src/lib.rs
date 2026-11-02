@@ -146,6 +146,101 @@ impl FfiWallet {
   pub fn primary_address(&self, network: FfiNetwork) -> Result<String, WalletError> {
     Ok(self.key.primary_address(network.into())?.to_string())
   }
+
+  /// A subaddress at the given account/address index. `(account=0, address_index=0)` is rejected
+  /// — that pair denotes the primary address, which [`FfiWallet::primary_address`] already covers.
+  pub fn subaddress(
+    &self,
+    network: FfiNetwork,
+    account: u32,
+    address_index: u32,
+  ) -> Result<String, WalletError> {
+    let index = wallet_core::oxide_wallet::address::SubaddressIndex::new(account, address_index)
+      .ok_or_else(|| WalletError::Key("account 0, address 0 is the primary address, not a subaddress".to_owned()))?;
+    Ok(self.key.subaddress(network.into(), index)?.to_string())
+  }
+
+  /// This wallet's public spend key, hex-encoded. Safe to share — every address already encodes
+  /// it — and, combined with [`FfiWallet::export_private_view_key_hex`], what an
+  /// [`FfiViewOnlyWallet`] companion is built from.
+  pub fn public_spend_key_hex(&self) -> String {
+    hex::encode(self.key.public_spend_key_bytes())
+  }
+
+  /// Export the private view key, hex-encoded. Unlike the spend key, sharing this is a
+  /// deliberate, named action (building a view-only companion) — not a leak — but it does reveal
+  /// this wallet's full transaction history to whoever holds it, so callers should still treat
+  /// the returned string as sensitive.
+  pub fn export_private_view_key_hex(&self) -> String {
+    hex::encode(*self.key.export_private_view_key())
+  }
+}
+
+/// A watch-only companion wallet: can derive addresses but holds no spend key and so can never
+/// sign a transaction. Built from [`FfiWallet::public_spend_key_hex`] and
+/// [`FfiWallet::export_private_view_key_hex`].
+#[derive(uniffi::Object)]
+pub struct FfiViewOnlyWallet {
+  wallet: wallet_core::keys::ViewOnlyWallet,
+}
+
+#[uniffi::export]
+impl FfiViewOnlyWallet {
+  /// Construct from a hex-encoded public spend key and private view key.
+  #[uniffi::constructor]
+  pub fn from_keys(
+    public_spend_key_hex: String,
+    private_view_key_hex: String,
+  ) -> Result<Arc<Self>, WalletError> {
+    let spend_bytes = decode_hex_32(&public_spend_key_hex)?;
+    let view_bytes = Zeroizing::new(decode_hex_32(&private_view_key_hex)?);
+    let wallet = wallet_core::keys::ViewOnlyWallet::from_keys(spend_bytes, view_bytes)?;
+    Ok(Arc::new(Self { wallet }))
+  }
+
+  /// This wallet's primary (non-sub) address.
+  pub fn primary_address(&self, network: FfiNetwork) -> String {
+    self.wallet.primary_address(network.into()).to_string()
+  }
+
+  /// A subaddress at the given account/address index.
+  pub fn subaddress(&self, network: FfiNetwork, account: u32, address_index: u32) -> Result<String, WalletError> {
+    let index = wallet_core::oxide_wallet::address::SubaddressIndex::new(account, address_index)
+      .ok_or_else(|| WalletError::Key("account 0, address 0 is the primary address, not a subaddress".to_owned()))?;
+    Ok(self.wallet.subaddress(network.into(), index).to_string())
+  }
+}
+
+fn decode_hex_32(s: &str) -> Result<[u8; 32], WalletError> {
+  let bytes = hex::decode(s).map_err(|e| WalletError::Key(format!("invalid hex: {e}")))?;
+  bytes
+    .try_into()
+    .map_err(|bytes: Vec<u8>| WalletError::Key(format!("expected 32 bytes, got {}", bytes.len())))
+}
+
+/// A parsed `monero:` payment URI (see `wallet_core::uri`).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiMoneroUri {
+  /// The destination address, base58-encoded.
+  pub address: String,
+  /// The requested amount, in atomic units (piconero), if the URI specified one.
+  pub amount_piconero: Option<u64>,
+  /// A human-readable description of the payment, if the URI specified one.
+  pub description: Option<String>,
+  /// The recipient's name, if the URI specified one.
+  pub recipient_name: Option<String>,
+}
+
+/// Parse a `monero:` payment URI. See `wallet_core::uri` for the exact grammar supported.
+#[uniffi::export]
+pub fn parse_monero_uri(uri: String) -> Result<FfiMoneroUri, WalletError> {
+  let parsed = wallet_core::uri::parse(&uri).map_err(|e| WalletError::Key(e.to_string()))?;
+  Ok(FfiMoneroUri {
+    address: parsed.address.to_string(),
+    amount_piconero: parsed.amount_piconero,
+    description: parsed.description,
+    recipient_name: parsed.recipient_name,
+  })
 }
 
 #[cfg(test)]
@@ -175,5 +270,49 @@ mod tests {
   async fn fetch_chain_height_reaches_a_real_node() {
     let height = fetch_chain_height("https://xmr.kret.dev".to_owned()).await.unwrap();
     assert!(height > 3_000_000, "mainnet should be well past block 3,000,000 by now");
+  }
+
+  #[test]
+  fn subaddress_rejects_zero_zero_but_accepts_others() {
+    let wallet = FfiWallet::generate();
+    assert!(wallet.subaddress(FfiNetwork::Mainnet, 0, 0).is_err());
+    let sub = wallet.subaddress(FfiNetwork::Mainnet, 0, 1).unwrap();
+    assert_ne!(sub, wallet.primary_address(FfiNetwork::Mainnet).unwrap());
+  }
+
+  #[test]
+  fn view_only_wallet_matches_the_full_wallets_addresses() {
+    let wallet = FfiWallet::generate();
+    let view_only = FfiViewOnlyWallet::from_keys(
+      wallet.public_spend_key_hex(),
+      wallet.export_private_view_key_hex(),
+    )
+    .unwrap();
+
+    assert_eq!(wallet.primary_address(FfiNetwork::Mainnet).unwrap(), view_only.primary_address(FfiNetwork::Mainnet));
+    assert_eq!(
+      wallet.subaddress(FfiNetwork::Mainnet, 1, 2).unwrap(),
+      view_only.subaddress(FfiNetwork::Mainnet, 1, 2).unwrap()
+    );
+  }
+
+  #[test]
+  fn view_only_wallet_rejects_malformed_hex() {
+    assert!(FfiViewOnlyWallet::from_keys("not hex".to_owned(), "also not hex".to_owned()).is_err());
+    assert!(FfiViewOnlyWallet::from_keys("ab".to_owned(), "cd".to_owned()).is_err()); // too short
+  }
+
+  #[test]
+  fn parses_a_monero_uri_with_amount() {
+    let wallet = FfiWallet::generate();
+    let address = wallet.primary_address(FfiNetwork::Mainnet).unwrap();
+    let parsed = parse_monero_uri(format!("monero:{address}?tx_amount=0.5")).unwrap();
+    assert_eq!(parsed.address, address);
+    assert_eq!(parsed.amount_piconero, Some(500_000_000_000));
+  }
+
+  #[test]
+  fn rejects_a_non_monero_uri() {
+    assert!(parse_monero_uri("https://example.com".to_owned()).is_err());
   }
 }

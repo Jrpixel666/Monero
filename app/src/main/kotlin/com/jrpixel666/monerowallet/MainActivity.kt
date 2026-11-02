@@ -53,19 +53,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.monero_wallet_ffi.FfiNetwork
+import uniffi.monero_wallet_ffi.FfiViewOnlyWallet
 import uniffi.monero_wallet_ffi.FfiWallet
 import uniffi.monero_wallet_ffi.WalletException
 import uniffi.monero_wallet_ffi.fetchChainHeight
+import uniffi.monero_wallet_ffi.parseMoneroUri
 
 /**
- * Stage 1+2+3 smoke-test screen: proves the Rust core (via UniFFI) plus the Android security
+ * Stage 1-5 smoke-test screen: proves the Rust core (via UniFFI) plus the Android security
  * mechanisms from THREAT_MODEL.md — Keystore-wrapped biometric unlock, PIN-routed decoy wallet,
  * root/emulator warning, process-level auto-lock, opt-in wipe-after-N-failures, sensitive
- * clipboard — are wired together and compile/run as real code paths, not just described in docs.
+ * clipboard, subaddresses, view-only wallets, `monero:` URI parsing, a local address book — are
+ * wired together and compile/run as real code paths, not just described in docs.
  *
- * This is NOT stage 6's real onboarding/dashboard/send UI; that's a from-scratch screen with
- * seed backup, address book, etc. This screen's job is to be the one place every stage-1-to-3
- * mechanism gets exercised end to end before stage 6 builds the real thing around them.
+ * This is NOT stage 6's real onboarding/dashboard/send UI; that's a from-scratch screen. This
+ * screen's job is to be the one place every stage-1-to-5 mechanism gets exercised end to end
+ * before stage 6 builds the real thing around them. Explicitly missing, and why: transaction
+ * building/broadcast (needs decoy selection + monero-wallet's send module — a major separate
+ * undertaking), fee priorities in the UI (meaningless without a send flow to attach them to,
+ * though `rpc::DaemonClient::fee_rate` is live-tested at the Rust layer), cold signing via
+ * animated QR/UR codes, and multisig (both substantial, separately-scoped future work).
  */
 class MainActivity : FragmentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -141,6 +148,21 @@ private fun WalletScreen(activity: FragmentActivity) {
   // A node this project verified reachable over HTTPS/443 during development — most public nodes
   // listen on 18081/18089 instead, which this sandbox's network couldn't reach (see crates/rpc).
   var daemonUrl by remember { mutableStateOf("https://xmr.kret.dev") }
+
+  var subaddressIndex by remember { mutableStateOf(0u) }
+  var subaddresses by remember { mutableStateOf(listOf<String>()) }
+
+  var uriInput by remember { mutableStateOf("") }
+  var uriResult by remember { mutableStateOf("") }
+
+  var addressBookLabel by remember { mutableStateOf("") }
+  var addressBookAddress by remember { mutableStateOf("") }
+  val addressBook = remember { AddressBook(context) }
+  var addressBookEntries by remember { mutableStateOf(addressBook.all()) }
+
+  var voSpendKeyHex by remember { mutableStateOf("") }
+  var voViewKeyHex by remember { mutableStateOf("") }
+  var voAddress by remember { mutableStateOf("") }
 
   val rootSuspicious = remember { RootDetection.isDeviceSuspicious(context) }
   val pinVault = remember { PinVault(context) }
@@ -298,6 +320,34 @@ private fun WalletScreen(activity: FragmentActivity) {
       }
     }
 
+    OmarchySectionCard {
+      OmarchyLabel("VIEW-ONLY WALLET (WATCH-ONLY, NO SPEND KEY)")
+      OmarchyTextField(value = voSpendKeyHex, onValueChange = { voSpendKeyHex = it }, label = "Public spend key (hex)")
+      OmarchyTextField(value = voViewKeyHex, onValueChange = { voViewKeyHex = it }, label = "Private view key (hex)")
+      OutlinedButton(
+        onClick = {
+          try {
+            val viewOnly = FfiViewOnlyWallet.fromKeys(voSpendKeyHex, voViewKeyHex)
+            voAddress = viewOnly.primaryAddress(FfiNetwork.MAINNET)
+            status = "Imported view-only wallet."
+          } catch (e: WalletException) {
+            status = "View-only import failed: ${e.message}"
+          }
+        },
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Text("Import view-only wallet")
+      }
+      if (voAddress.isNotEmpty()) {
+        Text(voAddress, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+      }
+      Text(
+        "Tip: unlock the real wallet below, then use its \"Export view-only keys\" action to fill these in.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+
     if (LockState.locked) {
       OmarchySectionCard {
         OmarchyLabel("WALLET LOCKED")
@@ -344,6 +394,106 @@ private fun WalletScreen(activity: FragmentActivity) {
           modifier = Modifier.fillMaxWidth(),
         ) {
           Text("Copy address")
+        }
+        OutlinedButton(
+          onClick = {
+            wallet?.let {
+              voSpendKeyHex = it.publicSpendKeyHex()
+              voViewKeyHex = it.exportPrivateViewKeyHex()
+              status = "Filled the view-only wallet fields above from this wallet's keys."
+            }
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Export view-only keys")
+        }
+      }
+
+      OmarchySectionCard {
+        OmarchyLabel("SUBADDRESSES (ACCOUNT 0)")
+        if (subaddresses.isNotEmpty()) {
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            subaddresses.forEachIndexed { i, addr ->
+              Text("[${i + 1}] $addr", style = MaterialTheme.typography.bodySmall, color = Omarchy.Foreground)
+            }
+          }
+        }
+        OutlinedButton(
+          onClick = {
+            val current = wallet ?: return@OutlinedButton
+            subaddressIndex += 1u
+            try {
+              val sub = current.subaddress(FfiNetwork.MAINNET, 0u, subaddressIndex)
+              subaddresses = subaddresses + sub
+            } catch (e: WalletException) {
+              status = "Subaddress derivation failed: ${e.message}"
+            }
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Derive next subaddress")
+        }
+      }
+
+      OmarchySectionCard {
+        OmarchyLabel("PARSE monero: URI")
+        OmarchyTextField(value = uriInput, onValueChange = { uriInput = it }, label = "monero:<address>?tx_amount=...")
+        OutlinedButton(
+          onClick = {
+            try {
+              val parsed = parseMoneroUri(uriInput)
+              val xmr = parsed.amountPiconero?.let { it.toString().padStart(13, '0').let { s ->
+                "${s.dropLast(12)}.${s.takeLast(12)}"
+              } }
+              uriResult = buildString {
+                append("address: ${parsed.address}\n")
+                append("amount: ${xmr ?: "(none)"}\n")
+                append("description: ${parsed.description ?: "(none)"}\n")
+                append("recipient: ${parsed.recipientName ?: "(none)"}")
+              }
+            } catch (e: WalletException) {
+              uriResult = ""
+              status = "URI parse failed: ${e.message}"
+            }
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Parse")
+        }
+        if (uriResult.isNotEmpty()) {
+          Text(uriResult, style = MaterialTheme.typography.bodySmall, color = Omarchy.Foreground)
+        }
+      }
+
+      OmarchySectionCard {
+        OmarchyLabel("ADDRESS BOOK (LOCAL, UNENCRYPTED — SEE AddressBook.kt)")
+        if (addressBookEntries.isNotEmpty()) {
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            addressBookEntries.forEach { entry ->
+              Text(
+                "${entry.label}: ${entry.address}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Omarchy.Foreground,
+              )
+            }
+          }
+        }
+        OmarchyTextField(value = addressBookLabel, onValueChange = { addressBookLabel = it }, label = "Label")
+        OmarchyTextField(value = addressBookAddress, onValueChange = { addressBookAddress = it }, label = "Address")
+        OutlinedButton(
+          onClick = {
+            if (addressBookLabel.isBlank() || addressBookAddress.isBlank()) {
+              status = "Enter both a label and an address."
+              return@OutlinedButton
+            }
+            addressBook.add(addressBookLabel, addressBookAddress)
+            addressBookEntries = addressBook.all()
+            addressBookLabel = ""
+            addressBookAddress = ""
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Add to address book")
         }
       }
 

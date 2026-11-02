@@ -24,12 +24,12 @@
 use core::future::Future;
 
 use monero_simple_request_rpc::{
-  prelude::{MoneroDaemon, ProvidesBlockchainMeta, ProvidesScannableBlocks},
+  prelude::{MoneroDaemon, ProvidesBlockchainMeta, ProvidesFeeRates, ProvidesScannableBlocks},
   SimpleRequestTransport,
 };
 
 pub use monero_simple_request_rpc::prelude::InterfaceError as RpcError;
-pub use monero_simple_request_rpc::prelude::ScannableBlock;
+pub use monero_simple_request_rpc::prelude::{FeeError, FeePriority, FeeRate, ScannableBlock};
 
 /// A connection to a Monero daemon over HTTP(S).
 pub struct DaemonClient(MoneroDaemon<SimpleRequestTransport>);
@@ -55,6 +55,15 @@ impl DaemonClient {
   /// `wallet_core::scanning::WalletScanner::scan_block`.
   pub async fn scannable_block_by_number(&self, number: usize) -> Result<ScannableBlock, RpcError> {
     self.0.scannable_block_by_number(number).await
+  }
+
+  /// The daemon's recommended fee rate for `priority`, rejected if it exceeds `max_per_weight` —
+  /// a sanity ceiling **the caller must choose**. This crate does not invent one: what's a sane
+  /// bound depends on recent real-world network conditions, which is a wallet-core/sync-loop
+  /// policy decision (stage 5, not yet made), not something to bake into an RPC transport crate
+  /// as an untested magic number.
+  pub async fn fee_rate(&self, priority: FeePriority, max_per_weight: u64) -> Result<FeeRate, FeeError> {
+    self.0.fee_rate(priority, max_per_weight).await
   }
 }
 

@@ -10,6 +10,7 @@
 
 pub mod keys;
 pub mod scanning;
+pub mod uri;
 
 pub use monero_wallet as oxide_wallet;
 pub use monero_wallet::address::Network;
