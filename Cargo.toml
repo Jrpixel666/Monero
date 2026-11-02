@@ -4,6 +4,8 @@ members = [
   "crates/wallet-core",
   "crates/storage",
   "crates/network",
+  "crates/ffi",
+  "crates/uniffi-bindgen",
 ]
 
 [profile.release]

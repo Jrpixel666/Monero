@@ -1,0 +1,19 @@
+[package]
+name = "ffi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "UniFFI bindings exposing wallet-core and storage to Kotlin"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "monero_wallet_ffi"
+
+[dependencies]
+wallet-core = { path = "../wallet-core" }
+storage = { path = "../storage" }
+uniffi = "0.28"
+thiserror = "2"
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
