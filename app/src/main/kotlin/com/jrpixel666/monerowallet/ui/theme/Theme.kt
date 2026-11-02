@@ -7,10 +7,27 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jrpixel666.monerowallet.R
+
+/**
+ * Omarchy's actual default font — confirmed from the project's own manual
+ * (learn.omacom.io/2/the-omarchy-manual/94/fonts): JetBrainsMono Nerd Font is both Omarchy's
+ * terminal font and its system/UI font, not two different fonts for two different jobs. This
+ * bundles plain JetBrains Mono (SIL OFL 1.1, see assets/licenses/) rather than the Nerd Font
+ * patch, since the patch only adds icon glyphs this app's own text never references.
+ */
+private val JetBrainsMono =
+  FontFamily(
+    Font(R.font.jetbrains_mono_regular, FontWeight.Normal),
+    Font(R.font.jetbrains_mono_medium, FontWeight.Medium),
+    Font(R.font.jetbrains_mono_semibold, FontWeight.SemiBold),
+    Font(R.font.jetbrains_mono_bold, FontWeight.Bold),
+  )
 
 private val OmarchyColorScheme =
   darkColorScheme(
@@ -29,24 +46,47 @@ private val OmarchyColorScheme =
     outline = Omarchy.Muted,
   )
 
-// Omarchy is a terminal-first, Hyprland-tiled environment — monospace, not a humanist sans, is
-// the on-theme choice here. FontFamily.Monospace is the platform's built-in monospace font
-// family so this doesn't need to bundle/license a font file to look the part.
 private val OmarchyTypography =
   Typography(
     titleMedium =
-      TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 18.sp),
-    bodyLarge = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 15.sp),
-    bodyMedium = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp),
-    bodySmall = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+      TextStyle(
+        fontFamily = JetBrainsMono,
+        fontWeight = FontWeight.Bold,
+        fontSize = 17.sp,
+        letterSpacing = 0.5.sp,
+      ),
+    titleSmall =
+      TextStyle(
+        fontFamily = JetBrainsMono,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 13.sp,
+        letterSpacing = 1.2.sp,
+      ),
+    bodyLarge = TextStyle(fontFamily = JetBrainsMono, fontWeight = FontWeight.Normal, fontSize = 14.sp),
+    bodyMedium = TextStyle(fontFamily = JetBrainsMono, fontWeight = FontWeight.Normal, fontSize = 13.sp),
+    bodySmall = TextStyle(fontFamily = JetBrainsMono, fontWeight = FontWeight.Normal, fontSize = 12.sp),
     labelLarge =
-      TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 14.sp),
+      TextStyle(
+        fontFamily = JetBrainsMono,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.sp,
+        letterSpacing = 1.sp,
+      ),
+    labelSmall =
+      TextStyle(
+        fontFamily = JetBrainsMono,
+        fontWeight = FontWeight.Medium,
+        fontSize = 10.sp,
+        letterSpacing = 0.8.sp,
+      ),
   )
 
-// Flat and sharp-ish rather than the soft, heavily-rounded cards in the reference mockup —
-// Omarchy's whole aesthetic is flat terminal windows, not soft-shadowed glassmorphism.
+// Every shape in this app is overridden to RectangleShape at the call site (see
+// ui/components/TerminalWidgets.kt) — a tiling-WM/terminal aesthetic doesn't round its windows.
+// This exists only so unstyled stock Material3 internals (e.g. ripple clipping) have *something*
+// sane to fall back to, not because this theme actually uses rounded corners anywhere visible.
 private val OmarchyShapes =
-  Shapes(small = RoundedCornerShape(4.dp), medium = RoundedCornerShape(6.dp), large = RoundedCornerShape(8.dp))
+  Shapes(small = RoundedCornerShape(0.dp), medium = RoundedCornerShape(0.dp), large = RoundedCornerShape(0.dp))
 
 @Composable
 fun OmarchyTheme(content: @Composable () -> Unit) {

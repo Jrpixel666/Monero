@@ -237,14 +237,30 @@ meaningful only once there's an actual signed release artifact to attest to.
 
 ## UI theme
 
-The smoke-test screen is styled after [Omarchy](https://github.com/basecamp/omarchy)'s
-"Tokyo Night" theme — dark, flat, bordered cards instead of soft drop-shadowed ones, monospace
-type (`FontFamily.Monospace`, so no font file needs bundling/licensing) — see
-`app/src/main/kotlin/.../ui/theme/`. This is a cosmetic choice for today's one throwaway screen,
-not a design system; stage 6's real UI should make its own call on visual direction rather than
-inherit this one by default. Omarchy ships 20+ themes (gruvbox, nord, catppuccin, matte-black,
-...); swapping `Color.kt`'s palette for another of its `colors.toml` files is a small, contained
-change if a different one is wanted.
+The smoke-test screen is themed after [Omarchy](https://github.com/basecamp/omarchy)'s "Tokyo
+Night" palette, deliberately beyond a color swap over stock Material3 widgets:
+
+- **Real font, not a system fallback.** Omarchy's manual (learn.omacom.io) names JetBrainsMono
+  Nerd Font as both its terminal *and* system font — one font, not two. This app bundles plain
+  JetBrains Mono (SIL OFL 1.1, `app/src/main/res/font/`, license text in
+  `app/src/main/assets/licenses/`) rather than reaching for `FontFamily.Monospace`, which on
+  Android resolves to whatever generic mono face the OEM shipped.
+- **A from-scratch widget set**, `ui/components/TerminalWidgets.kt`, standing in for `Card`,
+  filled `TextField` and rounded `Button` everywhere on the screen: titled, sharp-cornered
+  "window" panels instead of soft-shadowed rounded cards; a Waybar/Polybar-style thin status
+  strip instead of a `TopAppBar`; bracket-tagged status lines (`[OK]` / `[ERR]` / `[II]`,
+  colored and auto-leveled) instead of a plain paragraph; prompt-style field labels
+  (`PASSWORD:`) instead of Material's floating label; buttons prefixed with `❯` in tracked-out
+  uppercase. A tiling-WM floating-terminal look reads as deliberately Omarchy; reskinning
+  Material's own defaults in Omarchy's colors would not.
+- See it rendered before building: [this preview](https://claude.ai/artifact/1EzRn9g1rTDTt7gZeikiTo)
+  mirrors the real screen's markup, colors and font, with a Locked/Unlocked toggle standing in
+  for `LockState`.
+
+This is a cosmetic choice for today's one throwaway screen, not a design system — stage 6's real
+UI should make its own call on visual direction rather than inherit this one by default. Omarchy
+ships 20+ themes (gruvbox, nord, catppuccin, matte-black, ...); swapping `Color.kt`'s palette for
+another of its `colors.toml` files is a small, contained change if a different one is wanted.
 
 ## Building
 
