@@ -23,6 +23,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,9 +35,11 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.jrpixel666.monerowallet.security.FailedAttemptTracker
+import com.jrpixel666.monerowallet.security.InactivityTracker
 import com.jrpixel666.monerowallet.security.PinVault
 import com.jrpixel666.monerowallet.security.RootDetection
 import com.jrpixel666.monerowallet.security.SecureVault
+import com.jrpixel666.monerowallet.security.SecuritySettings
 import com.jrpixel666.monerowallet.security.WalletFiles
 import com.jrpixel666.monerowallet.ui.components.TerminalButton
 import com.jrpixel666.monerowallet.ui.components.TerminalOutlineButton
@@ -54,6 +57,7 @@ import java.io.File
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.monero_wallet_ffi.FfiNetwork
@@ -76,6 +80,12 @@ import uniffi.monero_wallet_ffi.parseMoneroUri
  * reskinned Material3 cards/buttons/text fields, a selectable set of Omarchy's own themes with
  * their exact palettes and one of their own per-theme wallpapers each (ui/theme/Color.kt,
  * ui/theme/ThemePreferences.kt), persisted across restarts.
+ *
+ * Also exposed here, now that they have somewhere to live: the inactivity-timeout auto-lock
+ * (`security/SecuritySettings.kt`, `security/InactivityTracker`, driven by
+ * `Activity.onUserInteraction()` — separate from, and in addition to, `WalletApplication`'s
+ * lock-on-backgrounding) and a real settings control for the wipe-after-N-failures policy, which
+ * previously defaulted to off with no UI to turn it on.
  *
  * This is NOT stage 6's real onboarding/dashboard/send UI; that's a from-scratch screen. This
  * screen's job is to be the one place every stage-1-to-5 mechanism gets exercised end to end
@@ -103,6 +113,14 @@ class MainActivity : FragmentActivity() {
         }
       }
     }
+  }
+
+  /** Any touch, key press or trackball motion while this activity is in front — exactly Android's
+   * own definition of "the user is still here" and why this, not a Compose gesture detector, is
+   * what drives the inactivity-timeout auto-lock. */
+  override fun onUserInteraction() {
+    super.onUserInteraction()
+    InactivityTracker.recordInteraction()
   }
 }
 
@@ -182,7 +200,29 @@ private fun WalletScreen(activity: FragmentActivity) {
   val pinVault = remember { PinVault(context) }
   val tracker = remember { FailedAttemptTracker(context) }
 
+  var wipeAfterNFailuresInput by remember { mutableStateOf(tracker.wipeAfterNFailures.toString()) }
+  var inactivityMinutesInput by remember {
+    mutableStateOf(SecuritySettings.inactivityTimeoutMinutes(context).toString())
+  }
+
   DisposableEffect(Unit) { onDispose { wallet?.close() } }
+
+  // Polls rather than reacting to a single timer, since the "clock" here is wall-clock elapsed
+  // time since the last real user interaction (InactivityTracker), which can only be checked, not
+  // subscribed to.
+  LaunchedEffect(Unit) {
+    while (true) {
+      delay(1_000)
+      val minutes = SecuritySettings.inactivityTimeoutMinutes(context)
+      if (!LockState.locked && InactivityTracker.hasTimedOut(minutes)) {
+        wallet?.close()
+        wallet = null
+        address = ""
+        LockState.locked = true
+        status = "Locked (inactivity timeout)."
+      }
+    }
+  }
 
   fun vaultAndFileFor(real: Boolean): Pair<SecureVault, File> =
     if (real) {
@@ -302,6 +342,32 @@ private fun WalletScreen(activity: FragmentActivity) {
               Omarchy.select(palette)
               ThemePreferences.save(context, palette)
             },
+          )
+        }
+
+        TerminalPanel(title = "security settings") {
+          TerminalTextField(
+            value = inactivityMinutesInput,
+            onValueChange = { inactivityMinutesInput = it.filter(Char::isDigit) },
+            label = "lock after N minutes idle (0 = off)",
+          )
+          TerminalTextField(
+            value = wipeAfterNFailuresInput,
+            onValueChange = { wipeAfterNFailuresInput = it.filter(Char::isDigit) },
+            label = "wipe wallet after N failed unlocks (0 = off)",
+          )
+          TerminalOutlineButton(
+            label = "Save security settings",
+            onClick = {
+              val minutes = inactivityMinutesInput.toIntOrNull() ?: 0
+              val failures = wipeAfterNFailuresInput.toIntOrNull() ?: 0
+              SecuritySettings.setInactivityTimeoutMinutes(context, minutes)
+              tracker.wipeAfterNFailures = failures
+              inactivityMinutesInput = minutes.toString()
+              wipeAfterNFailuresInput = failures.toString()
+              status = "Saved security settings."
+            },
+            modifier = Modifier.fillMaxWidth(),
           )
         }
 

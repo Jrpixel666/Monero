@@ -23,7 +23,7 @@ JVM unit tests (see THREAT_MODEL.md rows 5/9). Stages 6 and 7 are not started.
 |---|---|---|
 | 1 | Rust workspace, `monero-oxide`-backed key management, scanning wrapper, encrypted storage, daemon trust boundary | **done** |
 | 2 | UniFFI bindings (`crates/ffi`) exposing stage 1 to Kotlin; cross-compiled `.so` for arm64-v8a/x86_64; minimal Compose screen proving generate→encrypt→persist→decrypt→restore works on-device | **done** (seed phrase support (25-word + Polyseed) via `monero-seed`/`monero-polyseed` deferred — see `crates/wallet-core/src/keys.rs`) |
-| 3 | Android security layer: Keystore-wrapped storage key, biometric/PIN unlock, root/emulator detection, auto-lock, decoy wallet | **done, unverified on-device** (not done: `dataExtractionRules` — turned out to be a no-op given `allowBackup=false`, see the manifest's comment; Play Integrity, which needs a Play Console project only the app's owner can create; inactivity-timeout auto-lock, only backgrounding is wired up; a settings UI for the wipe-after-N-failures toggle) |
+| 3 | Android security layer: Keystore-wrapped storage key, biometric/PIN unlock, root/emulator detection, auto-lock, decoy wallet | **done, unverified on-device** — including inactivity-timeout auto-lock and a settings UI for the wipe-after-N-failures toggle, both filled in after this row was first written (see "What stage 3 actually gives you"); not done: `dataExtractionRules` — turned out to be a no-op given `allowBackup=false`, see the manifest's comment; Play Integrity, which needs a Play Console project only the app's owner can create |
 | 4 | Networking & privacy: embedded Tor (Arti), daemon RPC client wired to the `network` trust boundary, decoy selection, foreground sync service | **daemon RPC: done, tested live against real mainnet** (`crates/rpc`, cross-compiles for Android with tokio/hyper/rustls); **Tor: deliberately not attempted** — see `crates/rpc`'s module docs for why (this sandbox's network cannot reach Tor relays, so embedding Arti here could never be verified); decoy selection and a foreground sync service: not started |
 | 5 | Wallet features: subaddresses/accounts UI, `monero:` URIs, address book, view-only wallets, cold signing, encrypted backup | subaddresses, `monero:` URI parsing, view-only wallets, a local address book: **done**, see "What stage 5 actually gives you"; fee priorities: live-tested at the Rust layer (`rpc::DaemonClient::fee_rate`) but not surfaced in the UI (no send flow to attach it to); cold signing (animated QR/UR), multisig: not started — both substantial, separately-scoped future work |
 | 6 | Jetpack Compose UI: onboarding, dashboard, send/receive, history, node manager, security settings | not started (stage 2's `MainActivity` is a throwaway smoke test, not this UI — though as of stage 4 it's themed, see "UI theme" below) |
@@ -110,12 +110,17 @@ without that foundation would mean writing code against an API that's about to c
 - Manifest/UI hardening: `FLAG_SECURE`, `filterTouchesWhenObscured`, `MARK_AS_SENSITIVE` on the
   one clipboard copy this app does, no `INTERNET` permission (there's nothing to use it for yet).
 
-**What this does not include**, and why: `dataExtractionRules` (a no-op once `allowBackup=false`
-is set — see the manifest comment); Play Integrity (needs a Google Play Console project that only
-the app's owner can create — not something buildable without their credentials); an inactivity-
-*timeout* auto-lock as opposed to lock-on-backgrounding (needs a timer + settings UI, stage 6); a
-settings screen to actually turn the wipe-after-N-failures policy on (it defaults to off and
-nothing in this smoke-test screen exposes the toggle yet).
+**Added after this stage was first built** (so the implementation notes above describe the
+current state, not stage 3's original scope): an inactivity-*timeout* auto-lock in addition to
+lock-on-backgrounding (`security/SecuritySettings.kt`'s `InactivityTracker`, driven by
+`Activity.onUserInteraction()`, off by default, unit-tested), and a "security settings" panel on
+the screen itself to actually turn the wipe-after-N-failures policy on, instead of it only being
+settable by editing code.
+
+**What this still does not include**, and why: `dataExtractionRules` (a no-op once
+`allowBackup=false` is set — see the manifest comment); Play Integrity (needs a Google Play
+Console project that only the app's owner can create — not something buildable without their
+credentials).
 
 ## What stage 4 actually gives you
 
