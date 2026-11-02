@@ -19,7 +19,9 @@ import com.jrpixel666.monerowallet.R
  * (learn.omacom.io/2/the-omarchy-manual/94/fonts): JetBrainsMono Nerd Font is both Omarchy's
  * terminal font and its system/UI font, not two different fonts for two different jobs. This
  * bundles plain JetBrains Mono (SIL OFL 1.1, see assets/licenses/) rather than the Nerd Font
- * patch, since the patch only adds icon glyphs this app's own text never references.
+ * patch, since the patch only adds icon glyphs this app's own text never references. The font
+ * itself doesn't change with the selected [OmarchyPalette] — only the colors and wallpaper do,
+ * matching how Omarchy's own theme switcher works.
  */
 private val JetBrainsMono =
   FontFamily(
@@ -27,23 +29,6 @@ private val JetBrainsMono =
     Font(R.font.jetbrains_mono_medium, FontWeight.Medium),
     Font(R.font.jetbrains_mono_semibold, FontWeight.SemiBold),
     Font(R.font.jetbrains_mono_bold, FontWeight.Bold),
-  )
-
-private val OmarchyColorScheme =
-  darkColorScheme(
-    primary = Omarchy.Accent,
-    onPrimary = Omarchy.DarkerBackground,
-    secondary = Omarchy.Magenta,
-    onSecondary = Omarchy.DarkerBackground,
-    error = Omarchy.Red,
-    onError = Omarchy.DarkerBackground,
-    background = Omarchy.DarkerBackground,
-    onBackground = Omarchy.Foreground,
-    surface = Omarchy.Background,
-    onSurface = Omarchy.Foreground,
-    surfaceVariant = Omarchy.LighterBackground,
-    onSurfaceVariant = Omarchy.DarkForeground,
-    outline = Omarchy.Muted,
   )
 
 private val OmarchyTypography =
@@ -90,5 +75,25 @@ private val OmarchyShapes =
 
 @Composable
 fun OmarchyTheme(content: @Composable () -> Unit) {
-  MaterialTheme(colorScheme = OmarchyColorScheme, typography = OmarchyTypography, shapes = OmarchyShapes, content = content)
+  // Read inside the composable body, not hoisted to a top-level val: Omarchy.current is
+  // Compose-observable (see Color.kt), so this must recompute on every selection change for
+  // theme switching to actually repaint Material3's internals (ripples, text-field indicators,
+  // etc.) that read colorScheme rather than Omarchy.* directly.
+  val colorScheme =
+    darkColorScheme(
+      primary = Omarchy.Accent,
+      onPrimary = Omarchy.DarkerBackground,
+      secondary = Omarchy.Magenta,
+      onSecondary = Omarchy.DarkerBackground,
+      error = Omarchy.Red,
+      onError = Omarchy.DarkerBackground,
+      background = Omarchy.DarkerBackground,
+      onBackground = Omarchy.Foreground,
+      surface = Omarchy.Background,
+      onSurface = Omarchy.Foreground,
+      surfaceVariant = Omarchy.LighterBackground,
+      onSurfaceVariant = Omarchy.DarkForeground,
+      outline = Omarchy.Muted,
+    )
+  MaterialTheme(colorScheme = colorScheme, typography = OmarchyTypography, shapes = OmarchyShapes, content = content)
 }

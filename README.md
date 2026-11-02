@@ -237,8 +237,8 @@ meaningful only once there's an actual signed release artifact to attest to.
 
 ## UI theme
 
-The smoke-test screen is themed after [Omarchy](https://github.com/basecamp/omarchy)'s "Tokyo
-Night" palette, deliberately beyond a color swap over stock Material3 widgets:
+The smoke-test screen is themed after [Omarchy](https://github.com/basecamp/omarchy),
+deliberately beyond a color swap over stock Material3 widgets:
 
 - **Real font, not a system fallback.** Omarchy's manual (learn.omacom.io) names JetBrainsMono
   Nerd Font as both its terminal *and* system font — one font, not two. This app bundles plain
@@ -253,14 +253,27 @@ Night" palette, deliberately beyond a color swap over stock Material3 widgets:
   (`PASSWORD:`) instead of Material's floating label; buttons prefixed with `❯` in tracked-out
   uppercase. A tiling-WM floating-terminal look reads as deliberately Omarchy; reskinning
   Material's own defaults in Omarchy's colors would not.
-- See it rendered before building: [this preview](https://claude.ai/artifact/1EzRn9g1rTDTt7gZeikiTo)
-  mirrors the real screen's markup, colors and font, with a Locked/Unlocked toggle standing in
-  for `LockState`.
+- **Six real, selectable Omarchy themes**, not just Tokyo Night: Tokyo Night, Gruvbox, Nord,
+  Catppuccin, Everforest, Matte Black — exact palettes from each theme's own `colors.toml`
+  (`ui/theme/Color.kt`'s `OmarchyPalettes`), switchable from a swatch picker on the screen itself
+  and persisted across restarts (`ui/theme/ThemePreferences.kt`, plain `SharedPreferences` — a
+  cosmetic choice, not secret material). `Omarchy.current` is Compose-observable the same way
+  `LockState` is, so every `Omarchy.X` color reference throughout the app recomposes on
+  selection, with no palette parameter threaded through every composable.
+- **Each theme's own wallpaper.** One real wallpaper per theme (downscaled/recompressed for
+  mobile, `app/src/main/res/drawable-nodpi/`, ~450 KB total for all six; provenance and the
+  MIT license in `app/src/main/assets/licenses/omarchy_wallpapers_MIT.txt`) behind the whole
+  screen, dimmed by an 82% scrim (`WallpaperBackground()`) so panels stay legible over a busy
+  photo — the same relationship a real desktop compositor's bar has to its wallpaper.
+- See it rendered before building:
+  [this preview](https://claude.ai/artifact/1EzRn9g1rTDTt7gZeikiTo) mirrors the real screen's
+  markup, exact palettes, wallpapers and font, with the same theme picker and a Locked/Unlocked
+  toggle standing in for `LockState`.
 
 This is a cosmetic choice for today's one throwaway screen, not a design system — stage 6's real
 UI should make its own call on visual direction rather than inherit this one by default. Omarchy
-ships 20+ themes (gruvbox, nord, catppuccin, matte-black, ...); swapping `Color.kt`'s palette for
-another of its `colors.toml` files is a small, contained change if a different one is wanted.
+itself ships 20+ themes; adding another is a contained change to `OmarchyPalettes` plus one
+wallpaper file if a different one is wanted.
 
 ## Building
 

@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -43,9 +44,12 @@ import com.jrpixel666.monerowallet.ui.components.TerminalPanel
 import com.jrpixel666.monerowallet.ui.components.TerminalPrompt
 import com.jrpixel666.monerowallet.ui.components.TerminalStatusLine
 import com.jrpixel666.monerowallet.ui.components.TerminalTextField
+import com.jrpixel666.monerowallet.ui.components.ThemePicker
+import com.jrpixel666.monerowallet.ui.components.WallpaperBackground
 import com.jrpixel666.monerowallet.ui.components.WaybarTopBar
 import com.jrpixel666.monerowallet.ui.theme.Omarchy
 import com.jrpixel666.monerowallet.ui.theme.OmarchyTheme
+import com.jrpixel666.monerowallet.ui.theme.ThemePreferences
 import java.io.File
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -67,9 +71,11 @@ import uniffi.monero_wallet_ffi.parseMoneroUri
  * wired together and compile/run as real code paths, not just described in docs.
  *
  * Visually, this screen is Omarchy-themed deliberately beyond a color swap: real JetBrains Mono
- * (Omarchy's actual default font, confirmed from its own manual — see ui/theme/Theme.kt), and a
+ * (Omarchy's actual default font, confirmed from its own manual — see ui/theme/Theme.kt), a
  * from-scratch tiling-WM/terminal widget set (ui/components/TerminalWidgets.kt) in place of
- * reskinned Material3 cards/buttons/text fields.
+ * reskinned Material3 cards/buttons/text fields, a selectable set of Omarchy's own themes with
+ * their exact palettes and one of their own per-theme wallpapers each (ui/theme/Color.kt,
+ * ui/theme/ThemePreferences.kt), persisted across restarts.
  *
  * This is NOT stage 6's real onboarding/dashboard/send UI; that's a from-scratch screen. This
  * screen's job is to be the one place every stage-1-to-5 mechanism gets exercised end to end
@@ -86,6 +92,9 @@ class MainActivity : FragmentActivity() {
     // A tap that reaches this activity while another app's view is drawn on top of it (a
     // tapjacking overlay) is dropped rather than delivered. See THREAT_MODEL.md #2.
     window.decorView.filterTouchesWhenObscured = true
+    // Before the first frame, not after: otherwise the default theme flashes before the saved
+    // one takes over.
+    ThemePreferences.restore(applicationContext)
 
     setContent {
       OmarchyTheme {
@@ -275,235 +284,248 @@ private fun WalletScreen(activity: FragmentActivity) {
     )
   }
 
-  Column(modifier = Modifier.fillMaxSize()) {
-    WaybarTopBar(locked = LockState.locked, subtitle = "stage 1-5")
+  Box(modifier = Modifier.fillMaxSize()) {
+    WallpaperBackground()
 
-    Column(
-      modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp),
-      verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-      TerminalPrompt("status --wallet")
+    Column(modifier = Modifier.fillMaxSize()) {
+      WaybarTopBar(locked = LockState.locked, subtitle = "stage 1-5")
 
-      if (rootSuspicious) {
-        TerminalPanel(title = "security warning", accentColor = Omarchy.Red) {
-          Text(
-            "This device looks rooted or is an emulator.\nYour keys may be less protected here.",
-            style = MaterialTheme.typography.bodySmall,
-            color = Omarchy.Red,
-          )
-        }
-      }
+      Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+      ) {
+        TerminalPrompt("status --wallet")
 
-      TerminalStatusLine(status)
-
-      TerminalPanel(title = "daemon — no tor yet, see crates/rpc") {
-        TerminalTextField(value = daemonUrl, onValueChange = { daemonUrl = it }, label = "daemon url")
-        TerminalOutlineButton(
-          label = "Check live chain height",
-          onClick = {
-            scope.launch {
-              try {
-                val height = withContext(Dispatchers.IO) { fetchChainHeight(daemonUrl) }
-                status = "Chain height from $daemonUrl: $height"
-              } catch (e: WalletException) {
-                status = "Daemon request failed: ${e.message}"
-              }
-            }
-          },
-          modifier = Modifier.fillMaxWidth(),
-        )
-      }
-
-      TerminalPanel(title = "view-only wallet (watch-only)") {
-        TerminalTextField(value = voSpendKeyHex, onValueChange = { voSpendKeyHex = it }, label = "public spend key (hex)")
-        TerminalTextField(value = voViewKeyHex, onValueChange = { voViewKeyHex = it }, label = "private view key (hex)")
-        TerminalOutlineButton(
-          label = "Import view-only wallet",
-          onClick = {
-            try {
-              val viewOnly = FfiViewOnlyWallet.fromKeys(voSpendKeyHex, voViewKeyHex)
-              voAddress = viewOnly.primaryAddress(FfiNetwork.MAINNET)
-              status = "Imported view-only wallet."
-            } catch (e: WalletException) {
-              status = "View-only import failed: ${e.message}"
-            }
-          },
-          modifier = Modifier.fillMaxWidth(),
-        )
-        if (voAddress.isNotEmpty()) {
-          Text(voAddress, style = MaterialTheme.typography.bodyMedium, color = Omarchy.BrightForeground)
-        }
-        Text(
-          "tip: unlock the real wallet below, then use \"export view-only keys\" to fill these in",
-          style = MaterialTheme.typography.bodySmall,
-          color = Omarchy.DarkForeground,
-        )
-      }
-
-      if (LockState.locked) {
-        TerminalPanel(title = "wallet locked", accentColor = Omarchy.Red) {
-          TerminalButton(label = "Unlock real wallet (biometrics)", onClick = { unlock(real = true) }, modifier = Modifier.fillMaxWidth())
-          TerminalOutlineButton(
-            label = "Unlock decoy wallet (biometrics)",
-            onClick = { unlock(real = false) },
-            modifier = Modifier.fillMaxWidth(),
-          )
-
-          TerminalTextField(value = pin, onValueChange = { pin = it }, label = "or enter pin")
-          TerminalOutlineButton(
-            label = "Open with PIN",
-            onClick = {
-              when (pinVault.check(pin)) {
-                PinVault.Match.REAL -> unlock(real = true)
-                PinVault.Match.DECOY -> unlock(real = false)
-                PinVault.Match.NONE -> status = "That PIN didn't match either wallet."
-              }
+        TerminalPanel(title = "theme — omarchy, selectable") {
+          ThemePicker(
+            onSelect = { palette ->
+              Omarchy.select(palette)
+              ThemePreferences.save(context, palette)
             },
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
-      } else {
-        TerminalPanel(title = if (usingDecoy) "address (decoy wallet)" else "address", accentColor = Omarchy.Green) {
-          Text(address.ifEmpty { "(none yet)" }, style = MaterialTheme.typography.bodyMedium, color = Omarchy.BrightForeground)
-          TerminalOutlineButton(
-            label = "Copy address",
-            onClick = {
-              val clipboard = context.getSystemService(ClipboardManager::class.java)
-              val clip = ClipData.newPlainText("Monero address", address)
-              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                clip.description.extras =
-                  PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
-              }
-              clipboard.setPrimaryClip(clip)
-              status = "Address copied to clipboard."
-            },
-            modifier = Modifier.fillMaxWidth(),
-          )
-          TerminalOutlineButton(
-            label = "Export view-only keys",
-            onClick = {
-              wallet?.let {
-                voSpendKeyHex = it.publicSpendKeyHex()
-                voViewKeyHex = it.exportPrivateViewKeyHex()
-                status = "Filled the view-only wallet fields above from this wallet's keys."
-              }
-            },
-            modifier = Modifier.fillMaxWidth(),
           )
         }
 
-        TerminalPanel(title = "subaddresses — account 0") {
-          if (subaddresses.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              subaddresses.forEachIndexed { i, addr ->
-                Text("[${i + 1}] $addr", style = MaterialTheme.typography.bodySmall, color = Omarchy.Foreground)
-              }
-            }
-          }
-          TerminalOutlineButton(
-            label = "Derive next subaddress",
-            onClick = {
-              val current = wallet ?: return@TerminalOutlineButton
-              subaddressIndex += 1u
-              try {
-                val sub = current.subaddress(FfiNetwork.MAINNET, 0u, subaddressIndex)
-                subaddresses = subaddresses + sub
-              } catch (e: WalletException) {
-                status = "Subaddress derivation failed: ${e.message}"
-              }
-            },
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
-
-        TerminalPanel(title = "parse monero: uri") {
-          TerminalTextField(value = uriInput, onValueChange = { uriInput = it }, label = "monero:<address>?tx_amount=...")
-          TerminalOutlineButton(
-            label = "Parse",
-            onClick = {
-              try {
-                val parsed = parseMoneroUri(uriInput)
-                val xmr =
-                  parsed.amountPiconero?.let {
-                    it.toString().padStart(13, '0').let { s -> "${s.dropLast(12)}.${s.takeLast(12)}" }
-                  }
-                uriResult =
-                  buildString {
-                    append("address: ${parsed.address}\n")
-                    append("amount: ${xmr ?: "(none)"}\n")
-                    append("description: ${parsed.description ?: "(none)"}\n")
-                    append("recipient: ${parsed.recipientName ?: "(none)"}")
-                  }
-              } catch (e: WalletException) {
-                uriResult = ""
-                status = "URI parse failed: ${e.message}"
-              }
-            },
-            modifier = Modifier.fillMaxWidth(),
-          )
-          if (uriResult.isNotEmpty()) {
-            Text(uriResult, style = MaterialTheme.typography.bodySmall, color = Omarchy.Foreground)
+        if (rootSuspicious) {
+          TerminalPanel(title = "security warning", accentColor = Omarchy.Red) {
+            Text(
+              "This device looks rooted or is an emulator.\nYour keys may be less protected here.",
+              style = MaterialTheme.typography.bodySmall,
+              color = Omarchy.Red,
+            )
           }
         }
 
-        TerminalPanel(title = "address book — local, unencrypted") {
-          if (addressBookEntries.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              addressBookEntries.forEach { entry ->
-                Text("${entry.label}: ${entry.address}", style = MaterialTheme.typography.bodySmall, color = Omarchy.Foreground)
-              }
-            }
-          }
-          TerminalTextField(value = addressBookLabel, onValueChange = { addressBookLabel = it }, label = "label")
-          TerminalTextField(value = addressBookAddress, onValueChange = { addressBookAddress = it }, label = "address")
-          TerminalOutlineButton(
-            label = "Add to address book",
-            onClick = {
-              if (addressBookLabel.isBlank() || addressBookAddress.isBlank()) {
-                status = "Enter both a label and an address."
-                return@TerminalOutlineButton
-              }
-              addressBook.add(addressBookLabel, addressBookAddress)
-              addressBookEntries = addressBook.all()
-              addressBookLabel = ""
-              addressBookAddress = ""
-            },
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
+        TerminalStatusLine(status)
 
-        TerminalPanel(title = "actions") {
-          TerminalButton(
-            label = "Generate new wallet",
+        TerminalPanel(title = "daemon — no tor yet, see crates/rpc") {
+          TerminalTextField(value = daemonUrl, onValueChange = { daemonUrl = it }, label = "daemon url")
+          TerminalOutlineButton(
+            label = "Check live chain height",
             onClick = {
               scope.launch {
-                val newWallet = withContext(Dispatchers.Default) { FfiWallet.generate() }
-                wallet?.close()
-                wallet = newWallet
-                address = newWallet.primaryAddress(FfiNetwork.MAINNET)
-                usingDecoy = false
-                status = "Generated a new wallet. Not yet saved."
+                try {
+                  val height = withContext(Dispatchers.IO) { fetchChainHeight(daemonUrl) }
+                  status = "Chain height from $daemonUrl: $height"
+                } catch (e: WalletException) {
+                  status = "Daemon request failed: ${e.message}"
+                }
               }
             },
             modifier = Modifier.fillMaxWidth(),
           )
+        }
 
-          TerminalTextField(value = pin, onValueChange = { pin = it }, label = "pin to open this wallet later (optional)")
-
-          TerminalOutlineButton(label = "Protect & save as REAL wallet", onClick = { protectAndSave(real = true) }, modifier = Modifier.fillMaxWidth())
-          TerminalOutlineButton(label = "Protect & save as DECOY wallet", onClick = { protectAndSave(real = false) }, modifier = Modifier.fillMaxWidth())
+        TerminalPanel(title = "view-only wallet (watch-only)") {
+          TerminalTextField(value = voSpendKeyHex, onValueChange = { voSpendKeyHex = it }, label = "public spend key (hex)")
+          TerminalTextField(value = voViewKeyHex, onValueChange = { voViewKeyHex = it }, label = "private view key (hex)")
           TerminalOutlineButton(
-            label = "Lock now",
-            danger = true,
+            label = "Import view-only wallet",
             onClick = {
-              wallet?.close()
-              wallet = null
-              address = ""
-              LockState.locked = true
-              status = "Locked."
+              try {
+                val viewOnly = FfiViewOnlyWallet.fromKeys(voSpendKeyHex, voViewKeyHex)
+                voAddress = viewOnly.primaryAddress(FfiNetwork.MAINNET)
+                status = "Imported view-only wallet."
+              } catch (e: WalletException) {
+                status = "View-only import failed: ${e.message}"
+              }
             },
             modifier = Modifier.fillMaxWidth(),
           )
+          if (voAddress.isNotEmpty()) {
+            Text(voAddress, style = MaterialTheme.typography.bodyMedium, color = Omarchy.BrightForeground)
+          }
+          Text(
+            "tip: unlock the real wallet below, then use \"export view-only keys\" to fill these in",
+            style = MaterialTheme.typography.bodySmall,
+            color = Omarchy.DarkForeground,
+          )
+        }
+
+        if (LockState.locked) {
+          TerminalPanel(title = "wallet locked", accentColor = Omarchy.Red) {
+            TerminalButton(label = "Unlock real wallet (biometrics)", onClick = { unlock(real = true) }, modifier = Modifier.fillMaxWidth())
+            TerminalOutlineButton(
+              label = "Unlock decoy wallet (biometrics)",
+              onClick = { unlock(real = false) },
+              modifier = Modifier.fillMaxWidth(),
+            )
+
+            TerminalTextField(value = pin, onValueChange = { pin = it }, label = "or enter pin")
+            TerminalOutlineButton(
+              label = "Open with PIN",
+              onClick = {
+                when (pinVault.check(pin)) {
+                  PinVault.Match.REAL -> unlock(real = true)
+                  PinVault.Match.DECOY -> unlock(real = false)
+                  PinVault.Match.NONE -> status = "That PIN didn't match either wallet."
+                }
+              },
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
+        } else {
+          TerminalPanel(title = if (usingDecoy) "address (decoy wallet)" else "address", accentColor = Omarchy.Green) {
+            Text(address.ifEmpty { "(none yet)" }, style = MaterialTheme.typography.bodyMedium, color = Omarchy.BrightForeground)
+            TerminalOutlineButton(
+              label = "Copy address",
+              onClick = {
+                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                val clip = ClipData.newPlainText("Monero address", address)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                  clip.description.extras =
+                    PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+                }
+                clipboard.setPrimaryClip(clip)
+                status = "Address copied to clipboard."
+              },
+              modifier = Modifier.fillMaxWidth(),
+            )
+            TerminalOutlineButton(
+              label = "Export view-only keys",
+              onClick = {
+                wallet?.let {
+                  voSpendKeyHex = it.publicSpendKeyHex()
+                  voViewKeyHex = it.exportPrivateViewKeyHex()
+                  status = "Filled the view-only wallet fields above from this wallet's keys."
+                }
+              },
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
+
+          TerminalPanel(title = "subaddresses — account 0") {
+            if (subaddresses.isNotEmpty()) {
+              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                subaddresses.forEachIndexed { i, addr ->
+                  Text("[${i + 1}] $addr", style = MaterialTheme.typography.bodySmall, color = Omarchy.Foreground)
+                }
+              }
+            }
+            TerminalOutlineButton(
+              label = "Derive next subaddress",
+              onClick = {
+                val current = wallet ?: return@TerminalOutlineButton
+                subaddressIndex += 1u
+                try {
+                  val sub = current.subaddress(FfiNetwork.MAINNET, 0u, subaddressIndex)
+                  subaddresses = subaddresses + sub
+                } catch (e: WalletException) {
+                  status = "Subaddress derivation failed: ${e.message}"
+                }
+              },
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
+
+          TerminalPanel(title = "parse monero: uri") {
+            TerminalTextField(value = uriInput, onValueChange = { uriInput = it }, label = "monero:<address>?tx_amount=...")
+            TerminalOutlineButton(
+              label = "Parse",
+              onClick = {
+                try {
+                  val parsed = parseMoneroUri(uriInput)
+                  val xmr =
+                    parsed.amountPiconero?.let {
+                      it.toString().padStart(13, '0').let { s -> "${s.dropLast(12)}.${s.takeLast(12)}" }
+                    }
+                  uriResult =
+                    buildString {
+                      append("address: ${parsed.address}\n")
+                      append("amount: ${xmr ?: "(none)"}\n")
+                      append("description: ${parsed.description ?: "(none)"}\n")
+                      append("recipient: ${parsed.recipientName ?: "(none)"}")
+                    }
+                } catch (e: WalletException) {
+                  uriResult = ""
+                  status = "URI parse failed: ${e.message}"
+                }
+              },
+              modifier = Modifier.fillMaxWidth(),
+            )
+            if (uriResult.isNotEmpty()) {
+              Text(uriResult, style = MaterialTheme.typography.bodySmall, color = Omarchy.Foreground)
+            }
+          }
+
+          TerminalPanel(title = "address book — local, unencrypted") {
+            if (addressBookEntries.isNotEmpty()) {
+              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                addressBookEntries.forEach { entry ->
+                  Text("${entry.label}: ${entry.address}", style = MaterialTheme.typography.bodySmall, color = Omarchy.Foreground)
+                }
+              }
+            }
+            TerminalTextField(value = addressBookLabel, onValueChange = { addressBookLabel = it }, label = "label")
+            TerminalTextField(value = addressBookAddress, onValueChange = { addressBookAddress = it }, label = "address")
+            TerminalOutlineButton(
+              label = "Add to address book",
+              onClick = {
+                if (addressBookLabel.isBlank() || addressBookAddress.isBlank()) {
+                  status = "Enter both a label and an address."
+                  return@TerminalOutlineButton
+                }
+                addressBook.add(addressBookLabel, addressBookAddress)
+                addressBookEntries = addressBook.all()
+                addressBookLabel = ""
+                addressBookAddress = ""
+              },
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
+
+          TerminalPanel(title = "actions") {
+            TerminalButton(
+              label = "Generate new wallet",
+              onClick = {
+                scope.launch {
+                  val newWallet = withContext(Dispatchers.Default) { FfiWallet.generate() }
+                  wallet?.close()
+                  wallet = newWallet
+                  address = newWallet.primaryAddress(FfiNetwork.MAINNET)
+                  usingDecoy = false
+                  status = "Generated a new wallet. Not yet saved."
+                }
+              },
+              modifier = Modifier.fillMaxWidth(),
+            )
+
+            TerminalTextField(value = pin, onValueChange = { pin = it }, label = "pin to open this wallet later (optional)")
+
+            TerminalOutlineButton(label = "Protect & save as REAL wallet", onClick = { protectAndSave(real = true) }, modifier = Modifier.fillMaxWidth())
+            TerminalOutlineButton(label = "Protect & save as DECOY wallet", onClick = { protectAndSave(real = false) }, modifier = Modifier.fillMaxWidth())
+            TerminalOutlineButton(
+              label = "Lock now",
+              danger = true,
+              onClick = {
+                wallet?.close()
+                wallet = null
+                address = ""
+                LockState.locked = true
+                status = "Locked."
+              },
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
         }
       }
     }
