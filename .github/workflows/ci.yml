@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust workspace (build, test, clippy, fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo fmt --all -- --check
+
+  supply-chain:
+    name: Supply chain (cargo-audit, cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: supply-chain
+      - run: cargo install cargo-audit cargo-deny --locked
+      - run: cargo audit
+      - run: cargo deny check
+
+  fuzz-smoke-test:
+    name: Fuzz smoke test (30s per target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fuzz
+          workspaces: fuzz -> target
+      - run: cargo install cargo-fuzz --locked
+      # Short, bounded runs: this is a CI smoke test against regressions (exactly like the bug
+      # fuzz_storage_decrypt found during development — see README.md "What stage 8 actually
+      # gives you"), not a substitute for a longer continuous fuzzing setup.
+      - run: cargo fuzz run fuzz_uri_parse -- -max_total_time=30
+      - run: cargo fuzz run fuzz_address_parse -- -max_total_time=30
+      - run: cargo fuzz run fuzz_storage_decrypt -- -max_total_time=30
+
+  android:
+    name: Android app (cross-compile + assembleDebug)
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android SDK platform/build-tools/NDK
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+      - run: cargo install cargo-ndk --locked
+      - run: ./scripts/build-ffi.sh
+      - run: ./gradlew assembleDebug testDebugUnitTest --no-daemon

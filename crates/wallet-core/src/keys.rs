@@ -211,8 +211,7 @@ mod tests {
   fn subaddress_differs_from_primary_address() {
     let key = SpendKey::generate();
     let primary = key.primary_address(Network::Mainnet).unwrap();
-    let sub =
-      key.subaddress(Network::Mainnet, SubaddressIndex::new(0, 1).unwrap()).unwrap();
+    let sub = key.subaddress(Network::Mainnet, SubaddressIndex::new(0, 1).unwrap()).unwrap();
     assert_ne!(primary, sub);
   }
 
@@ -228,7 +227,8 @@ mod tests {
   fn view_only_wallet_derives_the_same_addresses_as_the_full_wallet() {
     let key = SpendKey::generate();
     let view_only =
-      ViewOnlyWallet::from_keys(key.public_spend_key_bytes(), key.export_private_view_key()).unwrap();
+      ViewOnlyWallet::from_keys(key.public_spend_key_bytes(), key.export_private_view_key())
+        .unwrap();
 
     assert_eq!(
       key.primary_address(Network::Mainnet).unwrap(),

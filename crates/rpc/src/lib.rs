@@ -62,7 +62,11 @@ impl DaemonClient {
   /// bound depends on recent real-world network conditions, which is a wallet-core/sync-loop
   /// policy decision (stage 5, not yet made), not something to bake into an RPC transport crate
   /// as an untested magic number.
-  pub async fn fee_rate(&self, priority: FeePriority, max_per_weight: u64) -> Result<FeeRate, FeeError> {
+  pub async fn fee_rate(
+    &self,
+    priority: FeePriority,
+    max_per_weight: u64,
+  ) -> Result<FeeRate, FeeError> {
     self.0.fee_rate(priority, max_per_weight).await
   }
 }

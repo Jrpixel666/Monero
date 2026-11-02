@@ -76,8 +76,8 @@ fn derive_key(
   t_cost: u32,
   p_cost: u8,
 ) -> Result<Zeroizing<[u8; KEY_LEN]>, StorageError> {
-  let params =
-    Params::new(m_cost, t_cost, u32::from(p_cost), Some(KEY_LEN)).map_err(|_| StorageError::KeyDerivation)?;
+  let params = Params::new(m_cost, t_cost, u32::from(p_cost), Some(KEY_LEN))
+    .map_err(|_| StorageError::KeyDerivation)?;
   let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
   let mut key = Zeroizing::new([0u8; KEY_LEN]);
   argon2.hash_password_into(password, salt, &mut *key).map_err(|_| StorageError::KeyDerivation)?;
@@ -95,8 +95,7 @@ pub fn encrypt(password: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, StorageErro
   let key = derive_key(password, &salt, DEFAULT_M_COST_KIB, DEFAULT_T_COST, DEFAULT_P_COST)?;
   let cipher = XChaCha20Poly1305::new(Key::from_slice(&*key));
   let nonce = XNonce::from_slice(&nonce_bytes);
-  let ciphertext =
-    cipher.encrypt(nonce, plaintext).map_err(|_| StorageError::KeyDerivation)?;
+  let ciphertext = cipher.encrypt(nonce, plaintext).map_err(|_| StorageError::KeyDerivation)?;
 
   let mut out = Vec::with_capacity(HEADER_LEN + ciphertext.len());
   out.extend_from_slice(&MAGIC);
@@ -147,7 +146,8 @@ mod tests {
 
   #[test]
   fn round_trips() {
-    let envelope = encrypt(b"correct horse battery staple", b"super secret spend key bytes").unwrap();
+    let envelope =
+      encrypt(b"correct horse battery staple", b"super secret spend key bytes").unwrap();
     let plaintext = decrypt(b"correct horse battery staple", &envelope).unwrap();
     assert_eq!(&*plaintext, b"super secret spend key bytes");
   }
@@ -174,7 +174,10 @@ mod tests {
 
   #[test]
   fn garbage_input_is_rejected_as_not_a_wallet_file() {
-    assert!(matches!(decrypt(b"password", b"not a wallet file"), Err(StorageError::NotAWalletFile)));
+    assert!(matches!(
+      decrypt(b"password", b"not a wallet file"),
+      Err(StorageError::NotAWalletFile)
+    ));
   }
 
   #[test]

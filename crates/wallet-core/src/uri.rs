@@ -92,14 +92,17 @@ fn parse_xmr_amount(s: &str) -> Result<u64, UriError> {
   if frac_str.len() > MAX_DECIMAL_PLACES || (whole_str.is_empty() && frac_str.is_empty()) {
     return Err(invalid());
   }
-  if !whole_str.bytes().all(|b| b.is_ascii_digit()) || !frac_str.bytes().all(|b| b.is_ascii_digit()) {
+  if !whole_str.bytes().all(|b| b.is_ascii_digit()) || !frac_str.bytes().all(|b| b.is_ascii_digit())
+  {
     return Err(invalid());
   }
 
-  let whole: u64 = if whole_str.is_empty() { 0 } else { whole_str.parse().map_err(|_| invalid())? };
+  let whole: u64 =
+    if whole_str.is_empty() { 0 } else { whole_str.parse().map_err(|_| invalid())? };
   let mut frac_padded = frac_str.to_owned();
   frac_padded.push_str(&"0".repeat(MAX_DECIMAL_PLACES - frac_str.len()));
-  let frac: u64 = if frac_padded.is_empty() { 0 } else { frac_padded.parse().map_err(|_| invalid())? };
+  let frac: u64 =
+    if frac_padded.is_empty() { 0 } else { frac_padded.parse().map_err(|_| invalid())? };
 
   whole.checked_mul(ATOMIC_UNITS_PER_XMR).and_then(|v| v.checked_add(frac)).ok_or_else(invalid)
 }

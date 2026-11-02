@@ -10,14 +10,14 @@ the next starts; nothing is marked done until it actually builds and has a test 
 
 ## Status
 
-**Stages 1–5 are done**, and stage 8 has a real, if partial, start — there is a real, installable
-debug APK (see "Building the Android app" below) with a Rust core, Keystore-backed biometric
-unlock, root detection, a decoy wallet, a real daemon-RPC client tested live against the actual
-Monero mainnet, subaddresses, view-only wallets, `monero:` URI parsing and a local address book,
-all wired through to a Compose screen on-device. **None of the Android-only security code has
-been run on a real device or emulator** — this sandbox has no Android runtime, only
-`gradle assembleDebug` and JVM unit tests (see THREAT_MODEL.md rows 5/9). Stages 6, 7 and 9 are
-not started.
+**Stages 1–5 are done**, and stages 8 and 9 each have a real, partial start — there is a real,
+installable debug APK (see "Building the Android app" below) with a Rust core, Keystore-backed
+biometric unlock, root detection, a decoy wallet, a real daemon-RPC client tested live against
+the actual Monero mainnet, subaddresses, view-only wallets, `monero:` URI parsing and a local
+address book, all wired through to a Compose screen on-device, plus CI, supply-chain auditing,
+and release-process documentation. **None of the Android-only security code has been run on a
+real device or emulator** — this sandbox has no Android runtime, only `gradle assembleDebug` and
+JVM unit tests (see THREAT_MODEL.md rows 5/9). Stages 6 and 7 are not started.
 
 | Stage | What it covers | Status |
 |---|---|---|
@@ -29,7 +29,7 @@ not started.
 | 6 | Jetpack Compose UI: onboarding, dashboard, send/receive, history, node manager, security settings | not started (stage 2's `MainActivity` is a throwaway smoke test, not this UI — though as of stage 4 it's themed, see "UI theme" below) |
 | 7 | Charts (Vico): balance/flow/fee history, opt-in price chart | not started |
 | 8 | Testing: fuzzing, FFI integration tests, Compose/Espresso UI tests, MobSF scan | **fuzzing: started and already paid for itself** — `fuzz/` (3 targets: URI parsing, address parsing, wallet-file decryption) found and fixed a real bug, see "What stage 8 actually gives you"; FFI integration tests exist as part of `crates/ffi`'s own test suite; Compose/Espresso UI tests and MobSF: not started (need a running emulator/device, which this sandbox doesn't have) |
-| 9 | Release: reproducible builds, signing, F-Droid/Play assets, SECURITY.md, privacy policy | not started (current APK is debug-signed with Gradle's default debug key — not a release artifact) |
+| 9 | Release: reproducible builds, signing, F-Droid/Play assets, SECURITY.md, privacy policy | `SECURITY.md`, `PRIVACY.md`, supply-chain CI (`cargo-audit`/`cargo-deny`, `deny.toml`), formatting CI (`.rustfmt.toml`), and a full CI pipeline (`.github/workflows/ci.yml`, not yet verified by an actual Actions run — see "What stage 9 actually gives you"): **done**; release signing with a hardware-protected key, F-Droid/Play Store submission, reproducible-build attestation: **not started, and not startable here** — they need a signing key and Play Console/F-Droid accounts that only the app's owner can create, not something buildable from within this sandbox |
 
 ## Repository layout
 
@@ -51,6 +51,12 @@ crates/uniffi-bindgen/ Standalone binding-generator binary (kept out of the cdyl
 app/                   Single Android module: a throwaway Compose smoke-test screen (stage 6
                        replaces this with the real onboarding/dashboard/send/receive UI)
 scripts/build-ffi.sh   Cross-compiles crates/ffi and regenerates app/'s Kotlin bindings
+fuzz/                  cargo-fuzz targets for this project's own parsers (stage 8)
+.github/workflows/     CI: Rust build/test/clippy/fmt, supply-chain audit, fuzz smoke test,
+                       Android cross-compile + assembleDebug (stage 9)
+SECURITY.md            Vulnerability disclosure policy
+PRIVACY.md             What this app actually does with your data and your network traffic today
+deny.toml              cargo-deny config (licenses, advisories, dependency sources)
 ```
 
 The `ui`/`security`/`data` module split from the original spec doesn't exist yet — `app` stays a
@@ -192,6 +198,43 @@ for seconds-to-minutes locally, not a continuously-running fuzzing setup (e.g. O
 accumulates corpus and coverage over weeks; Compose/Espresso UI tests and a MobSF scan both need
 a running emulator or device, which this sandbox doesn't have.
 
+## What stage 9 actually gives you
+
+- `SECURITY.md`: how to report a vulnerability (GitHub private reporting, with an email
+  fallback), what's in scope, and what to expect.
+- `PRIVACY.md`: describes what this app *actually does today*, not an aspirational end-state — in
+  particular, it says plainly that daemon RPC isn't yet routed through Tor and so is visible
+  metadata to the daemon operator and network observers, rather than claiming privacy protection
+  this stage doesn't yet provide.
+- `deny.toml` + `cargo audit`/`cargo deny check`, run for real against this project's actual
+  dependency tree (not just configured and left untested): found `RUSTSEC-2026-0387`
+  (crypto-bigint timing-variability issue), transitive through monero-oxide's own `monero-ed25519`
+  crate at our pinned commit — not something fixable by editing this repo, since forcing an
+  incompatible crypto-bigint version could silently break actual key-material arithmetic. Tracked
+  in `deny.toml` and `SECURITY.md` rather than papered over; bump the pinned `rev` once
+  monero-oxide itself moves past it. Also found and fixed: a missing `license` field on
+  `crates/uniffi-bindgen`'s `Cargo.toml`.
+- `.rustfmt.toml`: matches `monero-oxide`'s own (2-space indent, 100-col width), for consistency
+  across the dependency boundary. `cargo fmt --all` was run against the whole workspace to match
+  it — this uncovered a few lines this project's own code had let run past the column limit.
+- `.github/workflows/ci.yml`: build/test/clippy/fmt for the Rust workspace, `cargo-audit`/
+  `cargo-deny`, a 30-second-per-target fuzz smoke test (the same targets as stage 8 — exactly the
+  kind of check that would have caught the `storage::decrypt` bug on the next change, not just
+  once by hand), and an Android cross-compile + `assembleDebug` + unit-test job. **Not yet
+  verified by an actual GitHub Actions run** — this sandbox can write the YAML and run every
+  command it contains locally, but can't execute a GitHub Actions workflow itself; the first real
+  push to this branch's PR (or to `main`) will be its first live test.
+- The Gradle wrapper (`gradlew`, `gradle/wrapper/`) is now checked in, which earlier stages
+  deliberately skipped (this sandbox already had a system-wide Gradle install, so generating and
+  committing the wrapper wasn't necessary until CI — a GitHub Actions runner has no such thing —
+  needed one).
+
+**What's not done, and can't be from here**: release signing with a hardware-protected key, an
+F-Droid submission, and Play Store assets all need credentials and accounts (a signing keystore,
+an F-Droid metadata PR, a Google Play Console project) that only this project's owner can create.
+Reproducible-build attestation (publishing hashes someone else can independently reproduce) is
+meaningful only once there's an actual signed release artifact to attest to.
+
 ## UI theme
 
 The smoke-test screen is styled after [Omarchy](https://github.com/basecamp/omarchy)'s
@@ -238,6 +281,11 @@ stage 9.
 
 ## Supply chain
 
-`wallet-core`'s `monero-wallet` dependency is pinned to a specific git commit (`rev`, not a
-branch), checked in in `Cargo.toml`. `cargo-audit`/`cargo-deny`/`cargo-vet` CI gating is planned
-for stage 9, not wired up yet.
+`wallet-core`'s and `rpc`'s `monero-oxide`/`monero-simple-request-rpc` dependencies are pinned to
+the same specific git commit (`rev`, not a branch), checked in in their `Cargo.toml`s.
+`cargo-audit`/`cargo-deny` run in CI (`.github/workflows/ci.yml`) against `deny.toml`, which also
+documents the one open advisory (`RUSTSEC-2026-0387`, upstream in monero-oxide's own dependency
+tree) this project can't fix by itself. `cargo-vet` is not wired up — it needs trust decisions
+about which crates' *source*, not just their license/advisory status, this project vouches for,
+which is a judgment call for the project's maintainer, not something to default into CI
+unreviewed.

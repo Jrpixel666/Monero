@@ -124,7 +124,10 @@ impl FfiWallet {
   /// Restore a wallet from an envelope previously produced by [`FfiWallet::export_encrypted`].
   /// The decrypted key bytes live only inside this call's stack frame.
   #[uniffi::constructor]
-  pub fn restore_from_encrypted(password: String, envelope: Vec<u8>) -> Result<Arc<Self>, WalletError> {
+  pub fn restore_from_encrypted(
+    password: String,
+    envelope: Vec<u8>,
+  ) -> Result<Arc<Self>, WalletError> {
     let plaintext = storage::decrypt(password.as_bytes(), &envelope)?;
     if plaintext.len() != 32 {
       return Err(WalletError::Key("decrypted key material was not 32 bytes".to_owned()));
@@ -156,7 +159,9 @@ impl FfiWallet {
     address_index: u32,
   ) -> Result<String, WalletError> {
     let index = wallet_core::oxide_wallet::address::SubaddressIndex::new(account, address_index)
-      .ok_or_else(|| WalletError::Key("account 0, address 0 is the primary address, not a subaddress".to_owned()))?;
+      .ok_or_else(|| {
+        WalletError::Key("account 0, address 0 is the primary address, not a subaddress".to_owned())
+      })?;
     Ok(self.key.subaddress(network.into(), index)?.to_string())
   }
 
@@ -204,9 +209,16 @@ impl FfiViewOnlyWallet {
   }
 
   /// A subaddress at the given account/address index.
-  pub fn subaddress(&self, network: FfiNetwork, account: u32, address_index: u32) -> Result<String, WalletError> {
+  pub fn subaddress(
+    &self,
+    network: FfiNetwork,
+    account: u32,
+    address_index: u32,
+  ) -> Result<String, WalletError> {
     let index = wallet_core::oxide_wallet::address::SubaddressIndex::new(account, address_index)
-      .ok_or_else(|| WalletError::Key("account 0, address 0 is the primary address, not a subaddress".to_owned()))?;
+      .ok_or_else(|| {
+        WalletError::Key("account 0, address 0 is the primary address, not a subaddress".to_owned())
+      })?;
     Ok(self.wallet.subaddress(network.into(), index).to_string())
   }
 }
@@ -253,7 +265,8 @@ mod tests {
     let address_before = wallet.primary_address(FfiNetwork::Mainnet).unwrap();
 
     let envelope = wallet.export_encrypted("a strong password".to_owned()).unwrap();
-    let restored = FfiWallet::restore_from_encrypted("a strong password".to_owned(), envelope).unwrap();
+    let restored =
+      FfiWallet::restore_from_encrypted("a strong password".to_owned(), envelope).unwrap();
 
     assert_eq!(address_before, restored.primary_address(FfiNetwork::Mainnet).unwrap());
   }
@@ -289,7 +302,10 @@ mod tests {
     )
     .unwrap();
 
-    assert_eq!(wallet.primary_address(FfiNetwork::Mainnet).unwrap(), view_only.primary_address(FfiNetwork::Mainnet));
+    assert_eq!(
+      wallet.primary_address(FfiNetwork::Mainnet).unwrap(),
+      view_only.primary_address(FfiNetwork::Mainnet)
+    );
     assert_eq!(
       wallet.subaddress(FfiNetwork::Mainnet, 1, 2).unwrap(),
       view_only.subaddress(FfiNetwork::Mainnet, 1, 2).unwrap()
@@ -299,7 +315,8 @@ mod tests {
   #[test]
   fn view_only_wallet_rejects_malformed_hex() {
     assert!(FfiViewOnlyWallet::from_keys("not hex".to_owned(), "also not hex".to_owned()).is_err());
-    assert!(FfiViewOnlyWallet::from_keys("ab".to_owned(), "cd".to_owned()).is_err()); // too short
+    assert!(FfiViewOnlyWallet::from_keys("ab".to_owned(), "cd".to_owned()).is_err());
+    // too short
   }
 
   #[test]
